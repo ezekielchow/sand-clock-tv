@@ -1,0 +1,36 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.local.sandclock'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.local.sandclock'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+    // One fixed key, so new builds install over old ones (Android rejects a changed key).
+    // The key stays out of the repo; without it, builds use Android's default debug key.
+    def appKey = rootProject.file('sandclock.keystore')
+    signingConfigs {
+        debug {
+            if (appKey.exists()) {
+                storeFile appKey
+                storePassword 'sandclock'
+                keyAlias 'sandclock'
+                keyPassword 'sandclock'
+            }
+        }
+    }
+    buildTypes {
+        // Optimised build for the TV: runs much faster than a debug build (less CPU = less power).
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
