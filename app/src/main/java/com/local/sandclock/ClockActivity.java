@@ -9,6 +9,7 @@ import android.view.WindowManager;
 public class ClockActivity extends Activity implements SandClockView.Listener {
     private SandClockView view;
     private Prefs prefs;
+    private CloseOnScreensaver closer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -18,6 +19,7 @@ public class ClockActivity extends Activity implements SandClockView.Listener {
         view = new SandClockView(this);
         view.setListener(this);
         setContentView(view);
+        closer = CloseOnScreensaver.register(this);
         view.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
@@ -36,6 +38,12 @@ public class ClockActivity extends Activity implements SandClockView.Listener {
         prefs = Prefs.load(this);
         view.setPrefs(prefs);
         view.start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (closer != null) closer.unregister();
+        super.onDestroy();
     }
 
     @Override

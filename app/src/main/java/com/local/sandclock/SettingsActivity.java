@@ -37,6 +37,7 @@ public class SettingsActivity extends Activity {
     private SandClockView preview;
     private final List<Row> rows = new ArrayList<>();
     private TextView status;
+    private CloseOnScreensaver closer;
 
     /** Shows whether Sand Clock is still the TV's screensaver (firmware updates can reset it). */
     private void refreshStatus() {
@@ -185,7 +186,11 @@ public class SettingsActivity extends Activity {
             void step(int d) { prefs.keepScreensaver = !prefs.keepScreensaver; }
         });
         addAction(list, "Run clock now", new Runnable() {
-            public void run() { startActivity(new Intent(SettingsActivity.this, ClockActivity.class)); }
+            public void run() {
+                // Close settings, so leaving the clock goes back to the home screen.
+                startActivity(new Intent(SettingsActivity.this, ClockActivity.class));
+                finish();
+            }
         });
         addAction(list, "Open TV screensaver settings", new Runnable() {
             public void run() {
@@ -199,7 +204,7 @@ public class SettingsActivity extends Activity {
             }
         });
 
-        TextView hint = text("OK to change  ·  ◀ ▶ to adjust", 13, 0xFF7A6A5A);
+        TextView hint = text("◀ ▶ to change  ·  ▶ to open", 13, 0xFF7A6A5A);
         hint.setPadding(dp(12), dp(12), 0, 0);
         list.addView(hint);
 
@@ -211,6 +216,7 @@ public class SettingsActivity extends Activity {
         root.addView(preview, plp);
 
         setContentView(root);
+        closer = CloseOnScreensaver.register(this);
         preview.setPrefs(prefs);
         rows.get(0).valueView.post(new Runnable() {
             public void run() { ((View) rows.get(0).valueView.getParent()).requestFocus(); }
@@ -232,6 +238,12 @@ public class SettingsActivity extends Activity {
         super.onPause();
     }
 
+    @Override
+    protected void onDestroy() {
+        if (closer != null) closer.unregister();
+        super.onDestroy();
+    }
+
     private void addRow(LinearLayout list, final Row row) {
         LinearLayout item = rowContainer();
         TextView label = text(row.label, 16, 0xFFBFAF9F);
@@ -246,7 +258,7 @@ public class SettingsActivity extends Activity {
             public boolean onKey(View v, int keyCode, KeyEvent e) {
                 if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
                 if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { change(row, -1); return true; }
-                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) { change(row, 1); return true; }
+                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || isSelect(keyCode)) { change(row, 1); return true; }
                 return false;
             }
         });
@@ -256,11 +268,26 @@ public class SettingsActivity extends Activity {
 
     private void addAction(LinearLayout list, String label, final Runnable action) {
         LinearLayout item = rowContainer();
-        item.addView(text(label, 16, 0xFFF0D9BF));
+        item.addView(text(label, 16, 0xFFF0D9BF), new LinearLayout.LayoutParams(0, -2, 1f));
+        item.addView(text("▶", 16, 0xFFF0D9BF));
         item.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { action.run(); }
         });
+        // Remotes without an OK button: ▶ opens it too.
+        item.setOnKeyListener(new View.OnKeyListener() {
+            public boolean onKey(View v, int keyCode, KeyEvent e) {
+                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || isSelect(keyCode)) { action.run(); return true; }
+                return false;
+            }
+        });
         list.addView(item);
+    }
+
+    /** Buttons that some remotes use instead of a centre OK. */
+    private static boolean isSelect(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                || keyCode == KeyEvent.KEYCODE_BUTTON_A || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT;
     }
 
     private void change(Row row, int dir) {
