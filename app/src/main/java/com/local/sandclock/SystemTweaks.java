@@ -91,6 +91,26 @@ final class SystemTweaks {
         }
     }
 
+    /** A secure setting in minutes (-1 = never). */
+    static int secureMinutes(Context c, String key) {
+        try {
+            int ms = Settings.Secure.getInt(c.getContentResolver(), key, -1);
+            return ms < 0 ? -1 : ms / 60_000;
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
+    /** Sets a secure setting given in minutes (-1 = never). Needs the adb grant. */
+    static boolean setSecureMinutes(Context c, String key, int minutes) {
+        if (!canWrite(c)) return false;
+        try {
+            return Settings.Secure.putInt(c.getContentResolver(), key, minutes < 0 ? -1 : minutes * 60_000);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private static SharedPreferences store(Context c) {
         return c.getSharedPreferences("sandclock_restore", Context.MODE_PRIVATE);
     }

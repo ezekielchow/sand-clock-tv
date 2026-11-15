@@ -100,6 +100,27 @@ public class SettingsActivity extends Activity {
                 SystemTweaks.setScreensaverDelayMin(SettingsActivity.this, options[k]);
             }
         });
+        // Android's own idle settings that decide when the TV switches itself off.
+        addRow(list, new Row("Turn TV off after no use") {
+            final int[] options = {-1, 30, 60, 120, 240, 480};
+            String value() {
+                if (!SystemTweaks.canWrite(SettingsActivity.this)) return "needs adb grant";
+                return minutesLabel(SystemTweaks.secureMinutes(SettingsActivity.this, "sleep_timeout"), "Never");
+            }
+            void step(int d) {
+                cycleSecure("sleep_timeout", options, d);
+            }
+        });
+        addRow(list, new Row("Off after hours without a button") {
+            final int[] options = {-1, 240, 480, 720, 1440};
+            String value() {
+                if (!SystemTweaks.canWrite(SettingsActivity.this)) return "needs adb grant";
+                return minutesLabel(SystemTweaks.secureMinutes(SettingsActivity.this, "attentive_timeout"), "Off");
+            }
+            void step(int d) {
+                cycleSecure("attentive_timeout", options, d);
+            }
+        });
         addRow(list, new Row("Style") {
             String value() { return Prefs.STYLES[prefs.style]; }
             void step(int d) { prefs.style = wrap(prefs.style + d, Prefs.STYLES.length); }
@@ -282,6 +303,19 @@ public class SettingsActivity extends Activity {
             }
         });
         list.addView(item);
+    }
+
+    private void cycleSecure(String key, int[] options, int d) {
+        int cur = SystemTweaks.secureMinutes(this, key);
+        int k = 0;
+        for (int i = 0; i < options.length; i++) if (options[i] == cur) k = i;
+        SystemTweaks.setSecureMinutes(this, key, options[wrap(k + d, options.length)]);
+    }
+
+    private static String minutesLabel(int m, String never) {
+        if (m < 0) return never;
+        if (m < 60) return m + " min";
+        return (m % 60 == 0 ? String.valueOf(m / 60) : String.format(java.util.Locale.US, "%.1f", m / 60f)) + " h";
     }
 
     /** Buttons that some remotes use instead of a centre OK. */
