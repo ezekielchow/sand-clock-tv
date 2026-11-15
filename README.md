@@ -101,12 +101,12 @@ Everything works with ◀ ▶ (no OK button needed); ▶ also opens the action r
 | Brightness | Low, Medium, High (dims the drawn pixels) |
 | Clock | 12-hour / 24-hour |
 | Falling sand | Low (8 fps), Gentle (15 fps), Smooth (30 fps), Off (sand lands once a minute). Fewer frames = less work for the TV |
-| Pour in at start | On: when the screensaver starts, the day's sand so far rains down across the screen for about 3 s and settles around and into the letters. Off: the pile appears at once |
-| Vacuum before midnight | 1, 2, 5 (default) or 10 min before midnight a hole opens and sucks the sand away like wind: slow far off, faster near the hole; letters lose their walls. Off: the floor opens at midnight instead |
+| Pour in at start | On: when the screensaver starts, the clock appears first, then the day's sand so far rains down for a few seconds: it lands on the letters, fills them through their open tops, slides off and leaves pockets beneath, building the pile the day would really have made. Off: that pile appears at once |
+| Vacuum before midnight | 1, 2, 5 (default) or 10 min before midnight a hole opens; sand feels gravity plus its pull, so distant piles erode from the surface like wind on a dune and nearby sand is pulled in. Letters lose their walls. Off: the floor opens at midnight instead. **Preview end of day** runs the 5-minute version now at 3× speed |
 | Night schedule | On/Off, start and end in 30-minute steps |
 | At night show | Black screen, Dim clock |
 | Lower backlight at night | drops the backlight further during night hours |
-| Midnight reset during night | On: the midnight pour-out still plays, dimmed, if night mode covers midnight |
+| Midnight reset during night | On: the end-of-day vacuum (or the floor opening, if the vacuum is off) still plays, dimmed, if night mode covers it. Afterwards the screen goes back to your night setting |
 | Evening warmth | A Malaysian city (or Singapore): colours warm and dim from sunset, worked out offline |
 | Backlight while showing | Unchanged, 75 %, 50 %, 25 % of your backlight while the screensaver shows; restored afterwards |
 | Keep as screensaver | Re-selects Sand Clock if a firmware update resets the screensaver |

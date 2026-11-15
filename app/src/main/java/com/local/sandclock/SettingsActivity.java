@@ -304,6 +304,13 @@ public class SettingsActivity extends Activity {
                 finish();
             }
         });
+        addAction(list, "Preview end of day (at 3× speed)", new Runnable() {
+            public void run() {
+                startActivity(new Intent(SettingsActivity.this, ClockActivity.class)
+                        .putExtra(ClockActivity.EXTRA_DEMO_VACUUM, true));
+                finish();
+            }
+        });
         addAction(list, "Open TV screensaver settings", new Runnable() {
             public void run() {
                 try {

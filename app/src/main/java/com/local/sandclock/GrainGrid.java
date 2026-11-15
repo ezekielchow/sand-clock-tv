@@ -44,6 +44,7 @@ final class GrainGrid {
     private int seed;               // xorshift state (java.util.Random is slow on TV chips)
     private final boolean[] queued;
     private final int[] stamp;      // tick a grain last moved, so it moves once per tick
+    private final byte[] rest;      // ticks a grain has been unable to move (sleeps after 3)
     private int tickId = 1;
     private int[] cur = new int[4096];
     private int[] next = new int[4096];
@@ -66,6 +67,7 @@ final class GrainGrid {
         vy = new float[cols * rows];
         queued = new boolean[cols * rows];
         stamp = new int[cols * rows];
+        rest = new byte[cols * rows];
         seen = new int[cols * rows];
         target = new int[cols * rows];
         this.seed = (int) (seed * 2654435761L) | 1;
@@ -177,6 +179,8 @@ final class GrainGrid {
 
     private int holeX = -1, holeY, holeR;
     private float reach;          // grains closer than this feel the suction (grows over time)
+    private float strength = 1f;  // suction multiplier, rising toward midnight
+    private float strongR;        // within this distance the pull moves all sand, not just surface
     private int vacuumTicks;
 
     /** Opens the hole. Its pull starts at nothing and is widened with setVacuumReach. */
@@ -190,11 +194,29 @@ final class GrainGrid {
 
     void stopVacuum() { holeX = -1; }
 
+    /** Moves/resizes the open hole (it stays on the floor as it widens). */
+    void startVacuumMove(int x, int y, int radius) {
+        holeX = x;
+        holeY = y;
+        holeR = Math.max(1, radius);
+    }
+
     boolean vacuuming() { return holeX >= 0; }
 
-    void setVacuumReach(float r) { reach = r; }
+    /** r: how far the pull reaches; s: its strength; strong: radius inside which it moves all
+     *  sand (outside it only lifts surface grains). */
+    void setVacuumReach(float r, float s, float strong) { reach = r; strength = s; strongR = strong; }
 
-    /** Grains near the hole are pulled toward it: slowly far away, faster close in. */
+    /** The hole widens toward midnight, so more sand pours through it. */
+    void setHoleRadius(int r) { holeR = Math.max(1, r); }
+
+    int holeRadius() { return holeR; }
+
+    /**
+     * Inside the hole's reach a grain feels gravity plus suction toward the hole. Far away the
+     * suction is weak, so a pile holds and only surface grains blow toward the hole (like wind
+     * eroding a dune); close in the suction wins and sand is pulled in.
+     */
     private int suck(int i, int x, int y) {
         float dx = holeX - x, dy = holeY - y;
         float d = (float) Math.sqrt(dx * dx + dy * dy);
@@ -206,49 +228,90 @@ final class GrainGrid {
             sandCount--;
             return -1;
         }
-        // Cells per tick: a slow drift far away (scaled to the screen so distant sand still
-        // arrives in time), much faster close in.
-        float speed = 0.2f * rows / 90f + 4f * holeR / d;
+        // Gravity first: sand that can fall or slide downhill does (so faces slump to sand's
+        // natural slope); the suction then drags only sand that is resting stably, like wind
+        // over a dune. Right by the hole the pull wins outright.
+        if (d > holeR * 3) {
+            int j = fall(i, x, y);
+            if (j >= 0) return j;
+        }
+        // Far from the hole the pull is weak: it only lifts surface grains (open air beside
+        // them), like wind off a dune. Buried sand just obeys gravity and slides into the crater.
+        if (d > Math.max(holeR * 8, strongR) && !exposed(x, y)) return -1;
+        float pull = strength * (0.2f * rows / 90f + 4f * holeR / d); // suction, cells per tick
+        float fx = pull * dx / d, fy = pull * dy / d + 0.5f; // plus gravity
+        float speed = (float) Math.sqrt(fx * fx + fy * fy);
         int steps = (int) speed + (chance() < speed - (int) speed ? 1 : 0);
+        if (steps == 0) return i; // drifting slowly: stay awake, move another tick
         int cur = i, cx = x, cy = y;
+        boolean movedAny = false;
         for (int s = 0; s < steps; s++) {
-            dx = holeX - cx;
-            dy = holeY - cy;
-            if (dx * dx + dy * dy <= holeR * holeR) break;
-            float ax = Math.abs(dx), ay = Math.abs(dy);
-            boolean alongX = chance() * (ax + ay) < ax; // head roughly toward the hole
-            int mx = alongX ? (int) Math.signum(dx) : 0;
-            int my = alongX ? 0 : (int) Math.signum(dy);
+            if ((holeX - cx) * (holeX - cx) + (holeY - cy) * (holeY - cy) <= holeR * holeR) break;
+            float ax = Math.abs(fx), ay = Math.abs(fy);
+            int sx = (int) Math.signum(fx), sy = (int) Math.signum(fy);
+            boolean alongX = chance() * (ax + ay) < ax;
+            int mx = alongX ? sx : 0, my = alongX ? 0 : sy;
             if (chance() < 0.12f) { // a gust: drift sideways for a moment
                 if (alongX) { mx = 0; my = coin() ? 1 : -1; } else { my = 0; mx = coin() ? 1 : -1; }
             }
-            int nx = cx + mx, ny = cy + my;
-            if (!inside(nx, ny) || c[ny * cols + nx] != EMPTY) {
-                // Blocked: try the other direction toward the hole.
-                nx = cx + (alongX ? 0 : (int) Math.signum(dx));
-                ny = cy + (alongX ? (int) Math.signum(dy) : 0);
-                if (!inside(nx, ny) || c[ny * cols + nx] != EMPTY) break;
+            int[][] tries = {{mx, my}, {sx, sy}, {alongX ? 0 : sx, alongX ? sy : 0}};
+            boolean stepped = false;
+            for (int[] t : tries) {
+                int nx = cx + t[0], ny = cy + t[1];
+                if ((t[0] == 0 && t[1] == 0) || !inside(nx, ny) || c[ny * cols + nx] != EMPTY) continue;
+                cur = move(cur, cx, cy, nx, ny);
+                cx = nx;
+                cy = ny;
+                stepped = movedAny = true;
+                break;
             }
-            cur = move(cur, cx, cy, nx, ny);
-            cx = nx;
-            cy = ny;
+            if (!stepped) break;
         }
-        return cur; // stays awake while the vacuum runs, even if blocked this tick
+        if (movedAny) return cur;
+        return d > holeR * 3 ? -1 : fall(i, x, y); // boxed in: sleep until a neighbour moves
+    }
+
+    /** The hole swallows whatever sand is in its opening each tick, so it starts draining even
+     *  when it opens deep inside the pile; the grains around its edge wake and follow. */
+    private void swallow() {
+        if (holeX < 0) return;
+        for (int dy = -holeR; dy <= holeR; dy++) {
+            for (int dx = -holeR; dx <= holeR; dx++) {
+                if (dx * dx + dy * dy > holeR * holeR) continue;
+                int x = holeX + dx, y = holeY + dy;
+                if (!inside(x, y)) continue;
+                int i = y * cols + x;
+                if (c[i] != SAND) continue;
+                c[i] = EMPTY;
+                vy[i] = 0;
+                mark(i);
+                wakeAround(x, y);
+                wake(x, y + 1);
+                wake(x - 1, y + 1);
+                wake(x + 1, y + 1);
+                sandCount--;
+            }
+        }
+    }
+
+    /** True if the cell has empty space above, beside or below it. */
+    private boolean exposed(int x, int y) {
+        return isEmpty(x, y - 1) && y > 0 || isEmpty(x - 1, y) || isEmpty(x + 1, y) || (y + 1 < rows && isEmpty(x, y + 1));
     }
 
     private boolean inside(int x, int y) {
         return x >= 0 && x < cols && y >= 0 && y < rows;
     }
 
-    /** Every half second, wake resting grains the widening pull has just reached. */
-    private void wakeInReach() {
-        if (holeX < 0 || vacuumTicks++ % 15 != 0) return;
-        float r2 = reach * reach;
-        for (int i = 0; i < c.length; i++) {
-            if (c[i] != SAND || queued[i]) continue;
-            float dx = holeX - i % cols, dy = holeY - i / cols;
-            if (dx * dx + dy * dy <= r2) wakeIdx(i);
-        }
+    /**
+     * Regularly wake grains on the surface (next to empty space), so nothing stays stuck after
+     * the sand around it moved on: every 2 s normally, every half second during the vacuum.
+     * Grains that can't move go straight back to sleep, so this costs little.
+     */
+    private void wakeSurfaceRegularly() {
+        int every = holeX >= 0 ? 15 : 60;
+        if (vacuumTicks++ % every != 0) return;
+        wakeSurface();
     }
 
     /** One step for the grain at i. Returns its new index, or -1 if it rests (or left). */
@@ -258,7 +321,23 @@ final class GrainGrid {
             float dx = holeX - x, dy = holeY - y;
             if (dx * dx + dy * dy <= reach * reach) return suck(i, x, y);
         }
+        return fall(i, x, y);
+    }
+
+    /** Gravity: fall if nothing is below, otherwise slide down a slope (see SLIDE2). */
+    private int fall(int i, int x, int y) {
         if (isEmpty(x, y + 1)) {
+            // In a sinking column (just a one-cell gap below, sand right under it) a grain with
+            // open space beside it often tips outward instead: a sinking face crumbles to sand's
+            // natural slope rather than staying a sheer wall. Grains in open air fall straight.
+            if (y + 2 < rows && !isEmpty(x, y + 2) && coin()) {
+                int d = coin() ? 1 : -1;
+                for (int k = 0; k < 2; k++, d = -d) {
+                    if (isEmpty(x + d, y) && isEmpty(x + d, y + 1) && !isEmpty(x - d, y)) {
+                        return move(i, x, y, x + d, y + 1);
+                    }
+                }
+            }
             float v = Math.min(maxSpeed, vy[i] + gravity);
             vy[i] = v;
             int steps = Math.max(1, (int) v);
@@ -302,10 +381,19 @@ final class GrainGrid {
             int i = work[k];
             if (c[i] != SAND || stamp[i] == tickId) continue;
             int j = step(i);
-            if (j >= 0) wakeIdx(j); // still moving: check again next tick
+            if (j >= 0) {
+                rest[j] = 0;
+                wakeIdx(j); // still moving: check again next tick
+            } else if (c[i] == SAND && rest[i] < 3) {
+                rest[i]++;   // blocked, maybe by a grain falling past: try again shortly
+                wakeIdx(i);
+            } else if (c[i] == SAND) {
+                rest[i] = 0; // settled: sleep until a neighbour moves
+            }
         }
         pourStep();
-        wakeInReach();
+        swallow();
+        wakeSurfaceRegularly();
     }
 
     // ---- adding grains ----
@@ -323,132 +411,176 @@ final class GrainGrid {
 
     /** Drops a grain at the top of column x and lets it settle at once (catching up). */
     boolean dropInstant(int x) {
-        if (!isEmpty(x, 0)) return false;
         boolean open = floorOpen;
         floorOpen = false;
-        int y = 0;
-        while (true) {
-            if (y + 1 < rows && isEmpty(x, y + 1)) { y++; continue; }
-            int d = coin() ? 1 : -1;
-            boolean moved = false;
-            for (int k = 0; k < 2 && !moved; k++, d = -d) {
-                if (y + 1 < rows && isEmpty(x + d, y + 1) && isEmpty(x + d, y)) { x += d; y++; moved = true; }
-            }
-            boolean onText = y + 1 < rows && c[(y + 1) * cols + x] == SOLID;
-            if (!moved && !onText && chance() < slide2) {
-                for (int k = 0; k < 2 && !moved; k++, d = -d) {
-                    if (y + 1 < rows && isEmpty(x + d, y) && isEmpty(x + 2 * d, y) && isEmpty(x + 2 * d, y + 1)) {
-                        x += 2 * d; y++; moved = true;
-                    }
-                }
-            }
-            if (!moved) break;
-        }
+        int i = settle(c, x);
         floorOpen = open;
-        int i = y * cols + x;
+        if (i < 0) return false;
         c[i] = SAND;
         sandCount++;
         mark(i);
         return true;
     }
 
-    /**
-     * Fast catch-up on an empty grid with no digits: builds the pile n grains would form
-     * directly. Its surface is the same ragged staircase the falling grains make (each column
-     * one lower than the last with probability `slope`), with the peak height chosen so it
-     * holds exactly n grains. A swaying stream makes a flat-topped mound of half-width
-     * `plateau`. Returns the number placed.
-     */
-    int fill(int n, int x0, float slope, int plateau) {
-        return fillHeights(planPile(n, x0, slope, plateau));
+    /** Where a grain dropped at the top of column x comes to rest in grid g (same rules as
+     *  the animated grains), or -1 if the column is full to the top. Doesn't modify g. */
+    private int settle(byte[] g, int x) {
+        if (g[x] != EMPTY) return -1;
+        int y = 0;
+        while (true) {
+            if (y + 1 < rows && g[(y + 1) * cols + x] == EMPTY) { y++; continue; }
+            int d = coin() ? 1 : -1;
+            boolean moved = false;
+            for (int k = 0; k < 2 && !moved; k++, d = -d) {
+                if (y + 1 < rows && free(g, x + d, y + 1) && free(g, x + d, y)) { x += d; y++; moved = true; }
+            }
+            boolean onText = y + 1 < rows && g[(y + 1) * cols + x] == SOLID;
+            if (!moved && !onText && chance() < slide2) {
+                for (int k = 0; k < 2 && !moved; k++, d = -d) {
+                    if (y + 1 < rows && free(g, x + d, y) && free(g, x + 2 * d, y) && free(g, x + 2 * d, y + 1)) {
+                        x += 2 * d; y++; moved = true;
+                    }
+                }
+            }
+            if (!moved) return y * cols + x;
+        }
     }
 
-    /** Column heights of the pile n grains would form (see fill). */
-    int[] planPile(int n, int x0, float slope, int plateau) {
-        int[] off = new int[cols]; // how far below the peak each column's surface sits
-        for (int x = x0 + 1; x < cols; x++) {
-            off[x] = off[x - 1] + (x - x0 > plateau && chance() < slope ? 1 : 0);
+    private boolean free(byte[] g, int x, int y) {
+        return x >= 0 && x < cols && y >= 0 && y < rows && g[y * cols + x] == EMPTY;
+    }
+
+    /** Source column of the n-th grain of the day (the stream, with its sway). */
+    interface Stream { int column(int n); }
+
+    /**
+     * Works out where the day's first n grains would really be, letters included (heaps on
+     * them, sand inside them, pockets under them), by dropping each one from the stream in a
+     * hidden copy of the grid. Returns that grid; the live grid is unchanged.
+     */
+    byte[] simulateDay(int n, Stream stream) {
+        byte[] g = c.clone();
+        for (int k = 0; k < n; k++) {
+            int i = settle(g, stream.column(k));
+            if (i >= 0) g[i] = SAND;
         }
-        for (int x = x0 - 1; x >= 0; x--) {
-            off[x] = off[x + 1] + (x0 - x > plateau && chance() < slope ? 1 : 0);
+        return g;
+    }
+
+    /** Puts a simulated pile straight into the live grid. */
+    void applyPile(byte[] g) {
+        for (int i = 0; i < c.length; i++) {
+            if (g[i] == SAND && c[i] == EMPTY) { c[i] = SAND; sandCount++; }
         }
-        // Highest peak P whose pile holds at most n grains.
-        int lo = 0, hi = rows + cols;
-        while (lo < hi) {
-            int mid = (lo + hi + 1) >>> 1;
-            if (pileSize(off, mid) <= n) lo = mid; else hi = mid - 1;
-        }
-        int[] h = new int[cols];
-        long total = 0;
+        allChanged = true;
+    }
+
+    /**
+     * When to rain which grains so the simulated pile builds up for real: schedule[x * ticks + t]
+     * grains are released at the top of column x on tick t. Grains are released by the height
+     * of their final spot, lowest first, so the pile rises from the floor as it did through the
+     * day. Spots under a letter (no falling grain can reach them in a few seconds; over a day
+     * sand rolls in from the sides) are filled in step with the sand around them instead: the
+     * level under a letter rises with its surroundings. See shadowCells/shadowTicks.
+     */
+    int[] rainPlan(byte[] g, int ticks) {
+        int[] firstSolid = new int[cols]; // first row a falling grain can't pass, per column
         for (int x = 0; x < cols; x++) {
-            h[x] = Math.max(0, Math.min(rows, lo - off[x]));
-            total += h[x];
+            int y = 0;
+            while (y < rows && c[y * cols + x] != SOLID) y++;
+            firstSolid[x] = y;
         }
-        // Spread the few leftover grains on the surface next to the peak.
-        int left = (int) Math.min(n - total, Integer.MAX_VALUE);
-        for (int dist = 0; left > 0 && dist < cols; dist++) {
-            for (int side = -1; side <= 1 && left > 0; side += 2) {
-                int x = x0 + side * dist;
-                if (x < 0 || x >= cols || (dist == 0 && side == 1)) continue;
-                if (h[x] < rows && h[x] == Math.max(0, Math.min(rows, lo - off[x]))) {
-                    h[x]++;
-                    left--;
+        int[] schedule = new int[cols * ticks];
+        int nShadow = 0;
+        int[] shadow = new int[64];
+        // Bottom rows first, so shadow cells come out sorted by when they are due.
+        for (int y = rows - 1; y >= 0; y--) {
+            int t = Math.min(ticks - 1, (rows - 1 - y) * ticks / rows);
+            for (int x = 0; x < cols; x++) {
+                int i = y * cols + x;
+                if (g[i] != SAND || c[i] != EMPTY) continue;
+                if (y < firstSolid[x]) {
+                    schedule[x * ticks + t]++;
+                } else {
+                    if (nShadow == shadow.length) shadow = Arrays.copyOf(shadow, nShadow * 2);
+                    shadow[nShadow++] = i;
                 }
             }
         }
-        return h;
+        shadowCells = Arrays.copyOf(shadow, nShadow);
+        shadowNext = 0;
+        return schedule;
     }
 
-    /** Writes a planned pile straight into the grid. Returns the number placed. */
-    int fillHeights(int[] h) {
-        int placed = 0;
-        for (int x = 0; x < cols; x++) {
-            for (int y = rows - h[x]; y < rows; y++) c[y * cols + x] = SAND;
-            placed += h[x];
+    /** Spots under letters, bottom rows first; filled as the sand around them reaches them. */
+    private int[] shadowCells;
+    private int shadowNext;
+
+    /** Fills shadow cells up to the current pour tick, each once the cell below is filled. */
+    private void fillShadows(int t, int ticks) {
+        if (shadowCells == null) return;
+        while (shadowNext < shadowCells.length) {
+            int i = shadowCells[shadowNext];
+            int y = i / cols;
+            int due = Math.min(ticks - 1, (rows - 1 - y) * ticks / rows);
+            if (due > t) break;
+            boolean supported = y == rows - 1 || c[i + cols] != EMPTY;
+            if (!supported && t < ticks + 60) break; // wait for the sand below to arrive
+            if (c[i] == EMPTY) {
+                c[i] = SAND;
+                sandCount++;
+                mark(i);
+            }
+            shadowNext++;
         }
-        sandCount += placed;
-        allChanged = true;
-        return placed;
+    }
+
+    /** Wakes every grain that has empty space beside, above or below it. */
+    void wakeSurface() {
+        for (int i = 0; i < c.length; i++) {
+            if (c[i] != SAND) continue;
+            int x = i % cols, y = i / cols;
+            if ((y > 0 && c[i - cols] == EMPTY) || (y < rows - 1 && c[i + cols] == EMPTY)
+                    || (x > 0 && c[i - 1] == EMPTY) || (x < cols - 1 && c[i + 1] == EMPTY)) {
+                wakeIdx(i);
+            }
+        }
     }
 
     // ---- pour-in: the sand so far rains down across the whole width ----
 
-    private int[] pourLeft;   // grains still to release per column
-    private int pourTicks;    // ticks left in the pour
+    private int[] pourSchedule; // grains to release per column per tick (see rainPlan)
+    private int[] pourLeft;     // grains due but not yet released (top of column was busy)
+    private int pourTicks, pourTick;
 
-    /** Rains down a planned pile over `ticks` physics ticks; physics settles it. */
-    void startPour(int[] h, int ticks) {
-        pourLeft = h.clone();
+    /** Rains the scheduled grains down over `ticks` physics ticks; physics settles them. */
+    void startPour(int[] schedule, int ticks) {
+        pourSchedule = schedule;
+        pourLeft = new int[cols];
         pourTicks = ticks;
+        pourTick = 0;
     }
 
     boolean pouring() { return pourLeft != null; }
 
-    /** Releases this tick's grains: each column gets its share so all finish together. */
+    /** Releases this tick's grains at the top of each column. */
     private void pourStep() {
         if (pourLeft == null) return;
-        int ticksLeft = Math.max(1, pourTicks);
-        pourTicks--;
+        int t = pourTick++;
+        fillShadows(t, pourTicks);
         boolean any = false;
         for (int x = 0; x < cols; x++) {
+            if (t < pourTicks) pourLeft[x] += pourSchedule[x * pourTicks + t];
             int q = pourLeft[x];
             if (q <= 0) continue;
             any = true;
-            if (c[x] != EMPTY) {
-                // This column is full to the top: hand its grains to the nearest open one.
-                for (int d = 1; d < cols && pourLeft[x] > 0; d++) {
-                    for (int nx : new int[]{x - d, x + d}) {
-                        if (nx >= 0 && nx < cols && c[nx] == EMPTY) {
-                            pourLeft[nx] += q;
-                            pourLeft[x] = 0;
-                            break;
-                        }
-                    }
-                }
+            if (c[x] != EMPTY && t > pourTicks + 60) {
+                // Still full to the top long after its turn: give its grains to the columns
+                // with the most room.
+                spreadToRoomiest(x, q);
                 continue;
             }
-            int want = (int) (q / (float) ticksLeft + chance()); // a little randomness: rain
-            for (int y = 0; y < want; y++) {
+            for (int y = 0; y < q; y++) {
                 int i = y * cols + x;
                 if (y >= rows || c[i] != EMPTY) break;
                 c[i] = SAND;
@@ -459,14 +591,29 @@ final class GrainGrid {
                 pourLeft[x]--;
             }
         }
-        // Done, or a column stays blocked long after the pour should have finished.
-        if (!any || pourTicks < -300) pourLeft = null;
+        // Done, or something stays blocked long after the pour should have finished.
+        boolean shadowsDone = shadowCells == null || shadowNext >= shadowCells.length;
+        if ((!any && t >= pourTicks && shadowsDone) || t > pourTicks + 600) {
+            pourLeft = null;
+            pourSchedule = null;
+            shadowCells = null;
+            wakeSurface(); // nothing left hanging next to empty space
+        }
     }
 
-    private long pileSize(int[] off, int peak) {
-        long sum = 0;
-        for (int x = 0; x < cols; x++) sum += Math.max(0, Math.min(rows, peak - off[x]));
-        return sum;
+    private void spreadToRoomiest(int from, int q) {
+        pourLeft[from] = 0;
+        int[] depth = new int[cols];
+        for (int x = 0; x < cols; x++) depth[x] = x == from ? -1 : freeDepth(x);
+        int picks = Math.min(20, cols - 1);
+        int[] best = new int[picks];
+        for (int k = 0; k < picks; k++) {
+            int b = 0;
+            for (int x = 1; x < cols; x++) if (depth[x] > depth[b]) b = x;
+            best[k] = b;
+            depth[b] = -1;
+        }
+        for (int k = 0; k < q; k++) pourLeft[best[k % picks]]++;
     }
 
     // ---- the clock's digits as solid cells ----

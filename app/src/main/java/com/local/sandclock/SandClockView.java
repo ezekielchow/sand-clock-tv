@@ -79,14 +79,19 @@ public class SandClockView extends View {
     private String solidTime = "";
     private long shakeUntil = -1;
 
-    /** Pour-in running: letters are drawn but not yet solid, so the sand rains through them. */
-    private boolean pourPending;
-
     // End-of-day vacuum: a hole opens X minutes before midnight and sucks everything away.
     private boolean vacuumOn;
     private long vacuumOpenedAt;      // uptime, for the hole's opening animation
     private int holeX, holeY, holeR;
     private final Paint holePaint = new Paint();
+    /** "Preview end of day": the real 5-minute vacuum, run now at DEMO_SPEED× (about 100 s). */
+    private long demoStart = -1;
+    private static final int DEMO_SPEED = 3;
+    private static final long DEMO_MS = 5 * 60_000 / DEMO_SPEED;
+
+    void demoVacuum() {
+        demoStart = SystemClock.uptimeMillis();
+    }
 
     private boolean draining;
     private long drainStart;
@@ -180,18 +185,6 @@ public class SandClockView extends View {
     /** Grid rows: on a 1080-line screen each grain is exactly 4×4 pixels (crisp, even pixels). */
     private static final int GRID_ROWS = 270;
 
-    /** Slope at which a straight-sided pile from the drop point holds a full day of grains. */
-    private static float catchUpSlope(int cols, int rows, int x0) {
-        double lo = 0.05, hi = 3;
-        for (int i = 0; i < 40; i++) {
-            double mid = (lo + hi) / 2;
-            double cap = 0;
-            for (int x = 0; x < cols; x++) cap += Math.max(0, Math.min(rows, rows - Math.abs(x - x0) * mid));
-            if (cap > GRAINS_PER_DAY) lo = mid; else hi = mid;
-        }
-        return (float) Math.min(1.0, (lo + hi) / 2);
-    }
-
     // ---- the day's grid ----
 
     private void build(Calendar c, int w, int h) {
@@ -212,34 +205,27 @@ public class SandClockView extends View {
         textLayer = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
         colorKey = Integer.MIN_VALUE;
 
-        // Catch up to now. Pour-in: the clock appears first, then all the sand so far rains
-        // down across the screen and settles around and into the letters. Otherwise (night,
-        // animation off) the pile is placed at once and the letters push sand out of the way.
+        // Catch up to now. The letters go in first (solid), then a hidden run of the day so far
+        // works out where every grain would really be: heaps on the letters, sand inside them,
+        // pockets under them. Pour-in rains that pile down for real; otherwise (night, animation
+        // off, settings preview, vacuum time) it is placed at once.
         spawned = dueGrains(c);
-        int[] pile = grid.planPile(spawned, dropX, catchUpSlope(cols, rows, dropX), Math.round(swayAmp(spawned)));
+        shownTime = "";
+        renderClock(c, true);
+        solidTime = shownTime;
+        solidSlots = newSlots;
+        for (Slot sl : solidSlots) grid.setSolid(sl.cells);
+        byte[] dayPile = grid.simulateDay(spawned, new GrainGrid.Stream() {
+            public int column(int n) { return dropColumn(n); }
+        });
         int vm = Prefs.VACUUM_MIN[prefs.vacuum];
         long msNow = ((c.get(Calendar.HOUR_OF_DAY) * 60L + c.get(Calendar.MINUTE)) * 60
                 + c.get(Calendar.SECOND)) * 1000L;
         boolean inVacuumWindow = vm > 0 && msNow >= 86_400_000L - vm * 60_000L;
         boolean pour = prefs.pourIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && spawned > 0
-                && !inVacuumWindow;
-        if (!pour) grid.fillHeights(pile);
-        shownTime = "";
-        renderClock(c, true);
-        solidTime = shownTime;
-        pourPending = pour;
-        if (pour) {
-            // Letters are drawn now but only become solid once the sand has settled, so the
-            // pile builds from the floor up instead of stacking on the letters.
-            solidSlots = new java.util.ArrayList<>();
-            pendingSlots = newSlots;
-            shakeUntil = Long.MAX_VALUE;
-            markWallsAsLids(newSlots);
-            grid.startPour(pile, POUR_TICKS);
-        } else {
-            solidSlots = newSlots;
-            for (Slot sl : solidSlots) grid.setSolid(sl.cells);
-        }
+                && !inVacuumWindow && !previewMode && demoStart < 0;
+        if (pour) grid.startPour(grid.rainPlan(dayPile, POUR_TICKS), POUR_TICKS);
+        else grid.applyPile(dayPile);
         lastTickAt = SystemClock.uptimeMillis();
     }
 
@@ -312,16 +298,35 @@ public class SandClockView extends View {
             }
         }
 
-        if (!vacuumOn && vacMin > 0 && msOfDay >= vacFrom && !draining && !previewMode
-                && (!isNight() || prefs.nightFlip)) {
+        if (!vacuumOn && !draining && !previewMode && (demoStart >= 0
+                || (vacMin > 0 && msOfDay >= vacFrom && (!isNight() || prefs.nightFlip)))) {
             startVacuum(now);
+        }
+        if (vacuumOn && demoStart >= 0 && now - demoStart > DEMO_MS + 3000) {
+            demoStart = -1; // preview over: back to the day as it was
+            build(c, w, h);
+            return;
         }
         if (vacuumOn) {
             // The pull spreads out from the hole like wind, reaching the whole screen 60 % of
             // the way through, which leaves time for the last sand to arrive before midnight.
-            float f = Math.min(1f, (msOfDay - vacFrom) / (0.6f * vacMin * 60_000f));
+            float f = demoStart >= 0
+                    ? Math.min(1f, (now - demoStart) / (0.6f * DEMO_MS))
+                    : Math.min(1f, (msOfDay - vacFrom) / (0.6f * vacMin * 60_000f));
             float far = (float) Math.hypot(Math.max(holeX, grid.cols - holeX), Math.max(holeY, grid.rows - holeY));
-            grid.setVacuumReach(holeR + (far - holeR) * f * f);
+            float elapsed = demoStart >= 0
+                    ? Math.min(1f, (now - demoStart) / (float) DEMO_MS)
+                    : Math.min(1f, (msOfDay - vacFrom) / (vacMin * 60_000f));
+            // Final sweep: over the last 40 % the strong pull grows to cover the whole screen,
+            // so the last sand far from the hole goes too.
+            float sweep = Math.max(0f, (elapsed - 0.6f) / 0.4f);
+            // The hole widens from a small opening to about three times that, like a growing
+            // vortex: more sand pours through as midnight nears.
+            float unit = grid.rows / 270f;
+            holeR = Math.max(2, Math.round(unit * (4f + 8f * elapsed)));
+            holeY = grid.rows - holeR - 2;
+            grid.startVacuumMove(holeX, holeY, holeR);
+            grid.setVacuumReach(holeR + (far - holeR) * f * f, 1f + 2f * elapsed, far * sweep);
             String before = shownTime;
             renderClock(c, false);
             if (!shownTime.equals(before)) markWallsAsLids(newSlots); // letters stay wall-less
@@ -362,20 +367,13 @@ public class SandClockView extends View {
             pendingSlots = new java.util.ArrayList<>();
             for (Slot sl : newSlots) if (!kept.contains(sl.id)) pendingSlots.add(sl);
             shakeUntil = now + SHAKE_MS;
-            if (pourPending) { // still pouring: these letters also wait, drawn but not solid
-                shakeUntil = Long.MAX_VALUE;
-                markWallsAsLids(newSlots);
-            }
-        }
-        if (pourPending && !grid.pouring()) {
-            pourPending = false;
-            shakeUntil = now + 700; // let the last grains land, then the letters turn solid
+
         }
         if (pendingSlots != null && now >= shakeUntil) {
             for (Slot sl : pendingSlots) grid.setSolid(sl.cells);
             solidSlots.addAll(pendingSlots);
             pendingSlots = null;
-            renderClock(c, true); // walls are solid now: back to drawing only top edges as "lids"
+
         }
 
         physics(now);
@@ -393,13 +391,14 @@ public class SandClockView extends View {
         vacuumOn = true;
         vacuumOpenedAt = now;
         java.util.Random r = new java.util.Random();
-        holeR = Math.max(3, grid.rows / 50);
+        holeR = Math.max(2, Math.round(grid.rows / 270f * 4f));
         holeX = grid.cols / 5 + r.nextInt(grid.cols * 3 / 5);
-        holeY = grid.rows * 2 / 5 + r.nextInt(grid.rows * 2 / 5);
+        // At the floor, like the neck of an hourglass: everything above drains down into it
+        // under gravity, the crater's slopes all lead to it, and the suction speeds it up.
+        holeY = grid.rows - holeR - 2;
         for (Slot sl : solidSlots) grid.clearSolid(sl.cells);
         solidSlots = new java.util.ArrayList<>();
         pendingSlots = null;
-        pourPending = false;
         markWallsAsLids(newSlots);
         grid.startVacuum(holeX, holeY, holeR);
     }
@@ -409,7 +408,8 @@ public class SandClockView extends View {
         int ticks = (int) ((now - lastTickAt) / tickMs);
         if (ticks <= 0) return;
         lastTickAt += ticks * tickMs;
-        ticks = Math.min(ticks, 6); // after a pause, don't try to catch up frame by frame
+        int speed = demoStart >= 0 ? DEMO_SPEED : 1;
+        ticks = Math.min(ticks * speed, 6 * speed); // after a pause, don't catch up frame by frame
         for (int i = 0; i < ticks; i++) grid.tick();
     }
 
