@@ -1,0 +1,58 @@
+# Builds, signs and publishes the app when a version tag (e.g. v1.1) is pushed.
+# The TV's built-in updater picks up the newest release from here.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Third-party steps pinned to exact commits so they can't be changed under us.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # full history: the version code is the commit count
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        with:
+          gradle-version: '8.7'
+
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.SANDCLOCK_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "Secret SANDCLOCK_KEYSTORE_B64 is missing"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > sandclock.keystore
+
+      - name: Build
+        env:
+          SANDCLOCK_KEY_PASSWORD: ${{ secrets.SANDCLOCK_KEY_PASSWORD }}
+        run: |
+          CODE=$(git rev-list --count HEAD)
+          gradle --no-daemon assembleRelease -PversionCode="$CODE" -PversionName="${GITHUB_REF_NAME#v}"
+          cp app/build/outputs/apk/release/app-release.apk "sand-clock-$CODE.apk"
+          echo "APK=sand-clock-$CODE.apk" >> "$GITHUB_ENV"
+
+      - name: Check it is signed with the app's key
+        run: |
+          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -1)/apksigner \
+            verify --print-certs "$APK" | grep -qi 'd998ead168af47388221ea79e1fbd01f738303d447602c7329875edcabb7ce39' \
+            || { echo "APK is not signed with the Sand Clock key"; exit 1; }
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$APK" \
+            --title "Sand Clock ${GITHUB_REF_NAME#v}" --generate-notes
+          rm -f sandclock.keystore

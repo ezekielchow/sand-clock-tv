@@ -39,6 +39,68 @@ public class SettingsActivity extends Activity {
     private TextView status;
     private CloseOnScreensaver closer;
 
+    // Built-in updater state, shown in the "Updates" row.
+    private final Updater updater = new Updater();
+    private String updateStatus = "▶ to check";
+    private boolean updateReady, updateBusy;
+
+    /** Android's installer reports here: ask to confirm, then success or failure. */
+    private final android.content.BroadcastReceiver installStatus = new android.content.BroadcastReceiver() {
+        @Override
+        public void onReceive(android.content.Context context, Intent intent) {
+            int st = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, -999);
+            if (st == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(confirm);
+                }
+                setUpdateStatus("confirm on screen", false);
+            } else if (st == android.content.pm.PackageInstaller.STATUS_SUCCESS) {
+                setUpdateStatus("updated", false);
+            } else {
+                String msg = intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE);
+                setUpdateStatus("install cancelled" + (msg != null && st != android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED ? ": " + msg : ""), false);
+                updateReady = true;
+            }
+        }
+    };
+
+    private void setUpdateStatus(final String text, final boolean busy) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                updateStatus = text;
+                updateBusy = busy;
+                for (Row r : rows) r.valueView.setText(r.value());
+            }
+        });
+    }
+
+    /** ▶ on the Updates row: check first; if an update was found, download and install it. */
+    private void runUpdater() {
+        if (updateBusy) return;
+        final boolean install = updateReady;
+        setUpdateStatus(install ? "downloading…" : "checking…", true);
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    if (install) {
+                        updater.install(SettingsActivity.this);
+                        setUpdateStatus("starting install…", true);
+                    } else if (updater.check()) {
+                        updateReady = true;
+                        setUpdateStatus(updater.latestName + " available · ▶ install", false);
+                    } else {
+                        setUpdateStatus("up to date", false);
+                    }
+                } catch (java.io.IOException e) {
+                    updateReady = install && updateReady;
+                    setUpdateStatus("couldn't " + (install ? "download" : "check") + ": " + e.getMessage(), false);
+                }
+            }
+        }, "updater").start();
+    }
+
     /** Shows whether Sand Clock is still the TV's screensaver (firmware updates can reset it). */
     private void refreshStatus() {
         String current = null;
@@ -206,6 +268,10 @@ public class SettingsActivity extends Activity {
             }
             void step(int d) { prefs.keepScreensaver = !prefs.keepScreensaver; }
         });
+        addRow(list, new Row("Updates (v" + BuildConfig.VERSION_NAME + ")") {
+            String value() { return updateStatus; }
+            void step(int d) { if (d > 0) runUpdater(); }
+        });
         addAction(list, "Run clock now", new Runnable() {
             public void run() {
                 // Close settings, so leaving the clock goes back to the home screen.
@@ -238,6 +304,9 @@ public class SettingsActivity extends Activity {
 
         setContentView(root);
         closer = CloseOnScreensaver.register(this);
+        android.content.IntentFilter f = new android.content.IntentFilter(Updater.ACTION_INSTALL_STATUS);
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(installStatus, f, RECEIVER_NOT_EXPORTED);
+        else registerReceiver(installStatus, f);
         preview.setPrefs(prefs);
         rows.get(0).valueView.post(new Runnable() {
             public void run() { ((View) rows.get(0).valueView.getParent()).requestFocus(); }
@@ -262,6 +331,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (closer != null) closer.unregister();
+        try { unregisterReceiver(installStatus); } catch (IllegalArgumentException ignored) { }
         super.onDestroy();
     }
 

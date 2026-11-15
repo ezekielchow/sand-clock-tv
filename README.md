@@ -16,12 +16,28 @@ Android only installs an update over an app signed with the same key. Builds use
 safe, or create one once with:
 
 ```bash
-keytool -genkeypair -keystore sandclock.keystore -storepass sandclock -keypass sandclock \
+keytool -genkeypair -keystore sandclock.keystore -storepass YOUR_PASSWORD -keypass YOUR_PASSWORD \
   -alias sandclock -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Sand Clock"
+echo "storePassword=YOUR_PASSWORD" > keystore.properties   # not in git
 ```
 
 Without it the build is signed with a throwaway debug key, which can't update an install signed
 with a different key (uninstall first).
+
+## Releases and updates from the TV
+
+Push a version tag and GitHub builds, signs and publishes the app:
+
+```bash
+git tag v1.2 && git push origin v1.2
+```
+
+On the TV: Sand Clock settings → **Updates** → ▶ to check, ▶ again to install, then confirm.
+Android only installs it if it is signed with the same key, and asks once to allow
+"install unknown apps" for Sand Clock.
+
+The release workflow needs two repository secrets (Settings → Secrets and variables → Actions):
+`SANDCLOCK_KEYSTORE_B64` (the keystore, base64) and `SANDCLOCK_KEY_PASSWORD` (its password).
 
 ## Install on the TV
 

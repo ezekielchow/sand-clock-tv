@@ -6,3 +6,4 @@ app/build/
 *.keystore
 *.jks
 local.properties
+keystore.properties

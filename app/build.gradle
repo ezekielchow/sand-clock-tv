@@ -1,4 +1,17 @@
 plugins { id 'com.android.application' }
+
+// Version: the code is the number of commits (always goes up, so updates install); the name is
+// the release tag (e.g. 1.1) or "dev". Passed in by build.sh and the release workflow.
+def vCode = (project.findProperty('versionCode') ?: '1').toString().toInteger()
+def vName = (project.findProperty('versionName') ?: 'dev').toString()
+
+// Signing key password: SANDCLOCK_KEY_PASSWORD (release workflow secret) or keystore.properties
+// (local, not in the repo).
+def keyProps = new Properties()
+def keyPropsFile = rootProject.file('keystore.properties')
+if (keyPropsFile.exists()) keyPropsFile.withInputStream { keyProps.load(it) }
+def sandKeyPass = System.getenv('SANDCLOCK_KEY_PASSWORD') ?: keyProps.getProperty('storePassword')
+
 android {
     namespace 'com.local.sandclock'
     compileSdk 34
@@ -6,19 +19,23 @@ android {
         applicationId 'com.local.sandclock'
         minSdk 21
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        versionCode vCode
+        versionName vName
+        // Where the built-in updater looks for new releases.
+        buildConfigField 'String', 'UPDATE_REPO', '"ezekielchow/sand-clock-tv"'
     }
+    buildFeatures { buildConfig true }
+
     // One fixed key, so new builds install over old ones (Android rejects a changed key).
     // The key stays out of the repo; without it, builds use Android's default debug key.
     def appKey = rootProject.file('sandclock.keystore')
     signingConfigs {
         debug {
-            if (appKey.exists()) {
+            if (appKey.exists() && sandKeyPass) {
                 storeFile appKey
-                storePassword 'sandclock'
+                storePassword sandKeyPass
                 keyAlias 'sandclock'
-                keyPassword 'sandclock'
+                keyPassword sandKeyPass
             }
         }
     }
