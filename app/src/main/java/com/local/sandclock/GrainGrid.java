@@ -13,9 +13,26 @@ import java.util.Arrays;
  */
 final class GrainGrid {
     static final byte EMPTY = 0, SAND = 1, SOLID = 2;
-    /** Chance a grain on a gentle slope slides two cells sideways instead of stopping.
-     *  Tuned (by simulating full days) so a 480×270 screen fills with 86,400 grains. */
-    static final float SLIDE2 = 0.982f;
+    /**
+     * Chance a grain on a gentle slope slides two cells sideways instead of stopping; higher
+     * means a gentler pile that holds more sand. Tuned per drop position (by simulating full
+     * days) so a 480×270 screen fills with 86,400 grains: a pile near a wall needs a gentler
+     * slope to hold a full day. Index = drop position / 5 for 15..50 %, mirrored above 50 %.
+     */
+    private static final float[] SLIDE2_BY_DROP = {
+            1.0f, 0.998f, 0.996f, 0.9916f, 0.9879f, 0.9848f, 0.9831f, 0.9822f}; // 15,20,...,50 %
+    static final int MIN_DROP = 15, MAX_DROP = 85;
+
+    static float slideFor(int dropPos) {
+        int p = Math.max(MIN_DROP, Math.min(MAX_DROP, dropPos));
+        if (p > 50) p = 100 - p;
+        float f = (p - MIN_DROP) / 5f;
+        int i = Math.min(SLIDE2_BY_DROP.length - 2, (int) f);
+        float t = f - i;
+        return SLIDE2_BY_DROP[i] * (1 - t) + SLIDE2_BY_DROP[i + 1] * t;
+    }
+
+    private final float slide2;
     /** Physics ticks per second. */
     static final int TICK_HZ = 30;
 
@@ -41,9 +58,10 @@ final class GrainGrid {
     boolean floorOpen;
     int sandCount;
 
-    GrainGrid(int cols, int rows, long seed) {
+    GrainGrid(int cols, int rows, long seed, float slide2) {
         this.cols = cols;
         this.rows = rows;
+        this.slide2 = slide2;
         c = new byte[cols * rows];
         vy = new float[cols * rows];
         queued = new boolean[cols * rows];
@@ -177,7 +195,7 @@ final class GrainGrid {
         // Text is rough: a grain sitting on a digit doesn't take the extra sideways slide,
         // so heaps on the clock stand at a full 45°.
         boolean onText = y + 1 < rows && c[(y + 1) * cols + x] == SOLID;
-        if (!onText && chance() < SLIDE2) {
+        if (!onText && chance() < slide2) {
             for (int k = 0; k < 2; k++, d = -d) {
                 if (isEmpty(x + d, y) && isEmpty(x + 2 * d, y) && isEmpty(x + 2 * d, y + 1)) {
                     return move(i, x, y, x + 2 * d, y + 1);
@@ -232,7 +250,7 @@ final class GrainGrid {
                 if (y + 1 < rows && isEmpty(x + d, y + 1) && isEmpty(x + d, y)) { x += d; y++; moved = true; }
             }
             boolean onText = y + 1 < rows && c[(y + 1) * cols + x] == SOLID;
-            if (!moved && !onText && chance() < SLIDE2) {
+            if (!moved && !onText && chance() < slide2) {
                 for (int k = 0; k < 2 && !moved; k++, d = -d) {
                     if (y + 1 < rows && isEmpty(x + d, y) && isEmpty(x + 2 * d, y) && isEmpty(x + 2 * d, y + 1)) {
                         x += 2 * d; y++; moved = true;
@@ -340,8 +358,9 @@ final class GrainGrid {
     private int nearestFree(int start, int targetId) {
         int id = ++seenId;
         int head = 0, tail = 0;
+        // The start cell is part of the new letter: it keeps its "target" mark, so no later
+        // grain can be placed into it (it becomes wall a moment later and the grain would vanish).
         searchQueue[tail++] = start;
-        seen[start] = id;
         while (head < tail && head < 60_000) {
             int i = searchQueue[head++];
             int x = i % cols, y = i / cols;

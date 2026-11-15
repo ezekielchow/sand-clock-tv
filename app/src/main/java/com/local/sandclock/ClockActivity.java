@@ -25,11 +25,18 @@ public class ClockActivity extends Activity implements SandClockView.Listener {
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
 
-    /** Any remote button closes the clock and returns to what was on before. */
+    /** Any remote button closes the clock and returns to what was on before, except volume. */
     @Override
     public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
-        finish();
-        return true;
+        switch (keyCode) {
+            case android.view.KeyEvent.KEYCODE_VOLUME_UP:
+            case android.view.KeyEvent.KEYCODE_VOLUME_DOWN:
+            case android.view.KeyEvent.KEYCODE_VOLUME_MUTE:
+                return super.onKeyDown(keyCode, event);
+            default:
+                finish();
+                return true;
+        }
     }
 
     @Override

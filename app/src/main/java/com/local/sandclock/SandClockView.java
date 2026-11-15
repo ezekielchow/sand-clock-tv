@@ -33,7 +33,8 @@ public class SandClockView extends View {
 
     private static final int GRAINS_PER_DAY = 86_400;
     private static final long SHAKE_MS = 900;
-    private static final long DRAIN_MAX_MS = 8000;
+    /** A full screen pours out in about 9 s (one row per tick); allow some slack. */
+    private static final long DRAIN_MAX_MS = 14000;
     private static final float NIGHT_DIM = 0.35f;
     private static final float GLOW_SAND = 0.55f;
     private static final float DARK_BG = 0.4f;
@@ -188,7 +189,7 @@ public class SandClockView extends View {
         cell = Math.max(1, Math.round(h / (float) GRID_ROWS));
         int cols = (int) Math.ceil(w / cell), rows = (int) Math.ceil(h / cell);
         int day = dayKey(c);
-        grid = new GrainGrid(cols, rows, day);
+        grid = new GrainGrid(cols, rows, day, GrainGrid.slideFor(prefs.dropPos));
         gridDay = day;
         dropX = Math.round(frac * (cols - 1));
         draining = false;
@@ -264,6 +265,8 @@ public class SandClockView extends View {
                 drainStart = now;
                 for (Slot sl : solidSlots) grid.clearSolid(sl.cells);
                 pendingSlots = null;
+                java.util.Arrays.fill(lid, false); // letters are gone: no floating top edges
+                grid.markAll();
                 grid.openFloor();
             } else {
                 build(c, w, h);

@@ -28,6 +28,7 @@ public class SettingsActivity extends Activity {
     private abstract static class Row {
         final String label;
         TextView valueView;
+        boolean repeatable = true; // false: holding the button down doesn't repeat it
         Row(String label) { this.label = label; }
         abstract String value();
         abstract void step(int dir);
@@ -192,7 +193,10 @@ public class SettingsActivity extends Activity {
                 int v = prefs.dropPos;
                 return v + "%" + (v == 50 ? " (centre)" : v < 50 ? " (left)" : " (right)");
             }
-            void step(int d) { prefs.dropPos = wrap(prefs.dropPos + 5 * d, 105); }
+            void step(int d) {
+                int span = GrainGrid.MAX_DROP - GrainGrid.MIN_DROP + 5;
+                prefs.dropPos = GrainGrid.MIN_DROP + wrap(prefs.dropPos - GrainGrid.MIN_DROP + 5 * d, span);
+            }
         });
         addRow(list, new Row("Stream sway") {
             String value() { return Prefs.SWAY[prefs.sway]; }
@@ -268,10 +272,15 @@ public class SettingsActivity extends Activity {
             }
             void step(int d) { prefs.keepScreensaver = !prefs.keepScreensaver; }
         });
-        addRow(list, new Row("Updates (v" + BuildConfig.VERSION_NAME + ")") {
+        String version = BuildConfig.VERSION_NAME.startsWith("dev")
+                ? "dev build " + BuildConfig.VERSION_NAME.substring(Math.min(4, BuildConfig.VERSION_NAME.length()))
+                : "v" + BuildConfig.VERSION_NAME;
+        Row updates = new Row("Updates (" + version + ")") {
             String value() { return updateStatus; }
             void step(int d) { if (d > 0) runUpdater(); }
-        });
+        };
+        updates.repeatable = false;
+        addRow(list, updates);
         addAction(list, "Run clock now", new Runnable() {
             public void run() {
                 // Close settings, so leaving the clock goes back to the home screen.
@@ -348,6 +357,8 @@ public class SettingsActivity extends Activity {
         item.setOnKeyListener(new View.OnKeyListener() {
             public boolean onKey(View v, int keyCode, KeyEvent e) {
                 if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                boolean ours = keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || isSelect(keyCode);
+                if (ours && e.getRepeatCount() > 0 && !row.repeatable) return true;
                 if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { change(row, -1); return true; }
                 if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || isSelect(keyCode)) { change(row, 1); return true; }
                 return false;

@@ -16,6 +16,7 @@ import android.provider.Settings;
 final class SystemTweaks {
     private static final String BACKLIGHT_KEY = "picture_backlight";
     private static final String SAVED = "savedBacklight";
+    private static final String SET = "setBacklight"; // the level we set, to spot user changes
 
     static boolean canWrite(Context c) {
         return c.checkCallingOrSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
@@ -45,13 +46,14 @@ final class SystemTweaks {
         if (!canWrite(c)) return;
         try {
             SharedPreferences sp = store(c);
+            int current = Settings.Global.getInt(c.getContentResolver(), BACKLIGHT_KEY, -1);
+            if (current < 0) return; // this TV doesn't use the key
             int original = sp.getInt(SAVED, -1);
-            if (original < 0) {
-                original = Settings.Global.getInt(c.getContentResolver(), BACKLIGHT_KEY, -1);
-                if (original < 0) return; // this TV doesn't use the key
-                sp.edit().putInt(SAVED, original).commit();
-            }
+            // No saved level, or the backlight was changed since we set it: the current level is
+            // the user's own.
+            if (original < 0 || current != sp.getInt(SET, -1)) original = current;
             int target = Math.max(1, Math.round(original * fraction));
+            sp.edit().putInt(SAVED, original).putInt(SET, target).commit();
             Settings.Global.putInt(c.getContentResolver(), BACKLIGHT_KEY, target);
         } catch (RuntimeException ignored) {
         }
@@ -63,8 +65,12 @@ final class SystemTweaks {
         int original = sp.getInt(SAVED, -1);
         if (original < 0 || !canWrite(c)) return;
         try {
-            Settings.Global.putInt(c.getContentResolver(), BACKLIGHT_KEY, original);
-            sp.edit().remove(SAVED).commit();
+            // Only put it back if it is still at our level; if the user changed it, keep theirs.
+            int current = Settings.Global.getInt(c.getContentResolver(), BACKLIGHT_KEY, -1);
+            if (current == sp.getInt(SET, -1)) {
+                Settings.Global.putInt(c.getContentResolver(), BACKLIGHT_KEY, original);
+            }
+            sp.edit().remove(SAVED).remove(SET).commit();
         } catch (RuntimeException ignored) {
         }
     }

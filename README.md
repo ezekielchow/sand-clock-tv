@@ -1,6 +1,9 @@
 # Sand Clock (Android TV screensaver)
 
-Pixel-art sand clock: one grain falls every second of the day (86,400 by midnight), piling up on the ground and on the clock's digits. When the minute changes, the sand on the digits falls off. At midnight the floor opens and the screen empties.
+Pixel-art sand clock for Android TV, built as a low-power screensaver. One grain falls every
+second of the day (86,400 by midnight) and piles up on the floor. The clock's letters are open-top
+containers: sand pours in and fills them, and when a character changes it lets its sand go. At
+midnight the floor opens and the screen empties.
 
 ## Build
 
@@ -39,6 +42,9 @@ Android only installs it if it is signed with the same key, and asks once to all
 The release workflow needs two repository secrets (Settings → Secrets and variables → Actions):
 `SANDCLOCK_KEYSTORE_B64` (the keystore, base64) and `SANDCLOCK_KEY_PASSWORD` (its password).
 
+The version code is the number of commits, so every build counts as newer. **Never rewrite
+`main`'s history** (squash or force-push): the count could go down and the TV would refuse updates.
+
 ## Install on the TV
 
 1. On the TV, open **Settings → Device Preferences → About** and click **Build** 7 times. Then turn on **Developer options → USB debugging / Network debugging**.
@@ -76,28 +82,42 @@ adb shell settings put secure attentive_timeout -1        # Android 11+
 
 Also turn off any **Auto power off** / **Sleep timer** in the TV's own power settings.
 
-To test right away: `adb shell am start -n com.android.systemui/.Somnambulator` (or open the app and choose **Run clock now**).
+To see it right away, open the app and choose **Run clock now** (any button except volume closes it).
 
 ## Settings (open "Sand Clock" from the apps row)
 
+Everything works with ◀ ▶ (no OK button needed); ▶ also opens the action rows.
+
 | Setting | Options |
 |---|---|
+| Start screensaver after | 1–60 min (the TV's own setting; needs the `appops` grant) |
+| Turn TV off after no use | Never, 30 min – 8 h (Android `sleep_timeout`) |
+| Off after hours without a button | Off, 4–24 h (Android `attentive_timeout`) |
 | Style | Black sand (default: backlight zones under the sand switch fully off), Dark sand (faint grain texture), Glowing sand (lit sand on black) |
-| Grains fall at | 0–100% across the top of the screen, 5% steps (◀ ▶) |
+| Grains fall at | 15–85 % across the top, 5 % steps. The physics is tuned per position so the screen fills at midnight; nearer the edge a pile can't hold a full day |
+| Stream sway | Off, Gentle, Wide: the stream drifts back and forth (widest after midnight, none by the next midnight) so sand lands on every letter |
 | Colour | Sand, Mono, Amber, Red |
 | Brightness | Low, Medium, High (dims the drawn pixels) |
-| Clock | 24-hour / 12-hour |
-| Falling sand | Gentle (8 fps), Smooth (30 fps), Off (redraws once a minute) |
+| Clock | 12-hour / 24-hour |
+| Falling sand | Gentle (15 fps), Smooth (30 fps), Off (sand lands once a minute) |
 | Night schedule | On/Off, start and end in 30-minute steps |
 | At night show | Black screen, Dim clock |
-| Lower backlight at night | asks the system to drop the backlight |
-| Flip at midnight during night | On (default): if night mode covers midnight, the glass still flips, dimmed, for 4 seconds |
+| Lower backlight at night | drops the backlight further during night hours |
+| Midnight reset during night | On: the midnight pour-out still plays, dimmed, if night mode covers midnight |
+| Evening warmth | A Malaysian city (or Singapore): colours warm and dim from sunset, worked out offline |
+| Backlight while showing | Unchanged, 75 %, 50 %, 25 % of your backlight while the screensaver shows; restored afterwards |
+| Keep as screensaver | Re-selects Sand Clock if a firmware update resets the screensaver |
+| Updates | ▶ checks GitHub for a newer release, ▶ again installs it |
+
+Dismissing the screensaver (any button) returns to whatever was on before; the app's own screens
+close when the screensaver starts.
 
 ## Power tips (mini LED)
 
 - Set the TV's **local dimming** to High. On a black background the dark zones then switch off.
 - Lower the TV's own **backlight** setting. That matters more than anything drawn on screen.
-- For real power off overnight, use the TV's scheduled power-off if it has one. The app's night mode only blacks out the screen.
+- For real power off overnight, use the TV's scheduled power-off if it has one, or **Turn TV off after no use**. The app's night mode only blacks out the screen.
+- If the screensaver seems late: Android keeps the screen on for 10 minutes when you press buttons just as it dims ("undim detector"). There is no menu for it; `adb shell device_config put attention_manager_service keep_screen_on_enabled false` turns it off (may reset after a reboot).
 
 ## Uninstall
 

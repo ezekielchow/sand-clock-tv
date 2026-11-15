@@ -54,7 +54,8 @@ final class Prefs {
         SharedPreferences s = sp(c);
         Prefs p = new Prefs();
         p.style = clamp(s.getInt("style", 0), STYLES.length);
-        p.dropPos = Math.max(0, Math.min(100, s.getInt("dropPos", 50)));
+        // Outside 15..85 % the pile can't hold a full day before reaching the top.
+        p.dropPos = Math.max(GrainGrid.MIN_DROP, Math.min(GrainGrid.MAX_DROP, s.getInt("dropPos", 50)));
         p.sway = clamp(s.getInt("sway", 1), SWAY.length);
         p.theme = clamp(s.getInt("theme", 0), THEMES.length);
         p.brightness = clamp(s.getInt("brightness", 1), BRIGHTNESS.length);
