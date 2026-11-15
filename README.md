@@ -94,12 +94,13 @@ Everything works with ◀ ▶ (no OK button needed); ▶ also opens the action r
 | Turn TV off after no use | Never, 30 min – 8 h (Android `sleep_timeout`) |
 | Off after hours without a button | Off, 4–24 h (Android `attentive_timeout`) |
 | Style | Black sand (default: backlight zones under the sand switch fully off), Dark sand (faint grain texture), Glowing sand (lit sand on black) |
+| Background | Normal, Dim (Black/Dark sand styles: the lit background at half brightness, for less backlight) |
 | Grains fall at | 15–85 % across the top, 5 % steps. The physics is tuned per position so the screen fills at midnight; nearer the edge a pile can't hold a full day |
 | Stream sway | Off, Gentle, Wide: the stream drifts back and forth (widest after midnight, none by the next midnight) so sand lands on every letter |
 | Colour | Sand, Mono, Amber, Red |
 | Brightness | Low, Medium, High (dims the drawn pixels) |
 | Clock | 12-hour / 24-hour |
-| Falling sand | Gentle (15 fps), Smooth (30 fps), Off (sand lands once a minute) |
+| Falling sand | Low (8 fps), Gentle (15 fps), Smooth (30 fps), Off (sand lands once a minute). Fewer frames = less work for the TV |
 | Night schedule | On/Off, start and end in 30-minute steps |
 | At night show | Black screen, Dim clock |
 | Lower backlight at night | drops the backlight further during night hours |

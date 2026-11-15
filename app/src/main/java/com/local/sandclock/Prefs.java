@@ -16,7 +16,14 @@ final class Prefs {
     };
     static final String[] BRIGHTNESS = {"Low", "Medium", "High"};
     static final float[] BRIGHTNESS_FACTOR = {0.45f, 0.7f, 1f};
-    static final String[] ANIM = {"Gentle", "Smooth", "Off"};
+    // Stored values stay stable for saved settings; ANIM_ORDER is the order the setting cycles in.
+    static final String[] ANIM = {"Gentle (15 fps)", "Smooth (30 fps)", "Off", "Low (8 fps)"};
+    static final int ANIM_GENTLE = 0, ANIM_SMOOTH = 1, ANIM_OFF = 2, ANIM_LOW = 3;
+    static final int[] ANIM_ORDER = {ANIM_LOW, ANIM_GENTLE, ANIM_SMOOTH, ANIM_OFF};
+    /** Background brightness in the Black/Dark sand styles: the lit area most of the morning. */
+    static final String[] BACKGROUND = {"Normal", "Dim"};
+    static final float[] BACKGROUND_F = {0.4f, 0.2f};
+    int background = 0;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black sand", "Dark sand", "Glowing sand"};
@@ -60,6 +67,7 @@ final class Prefs {
         p.theme = clamp(s.getInt("theme", 0), THEMES.length);
         p.brightness = clamp(s.getInt("brightness", 1), BRIGHTNESS.length);
         p.anim = clamp(s.getInt("anim", 0), ANIM.length);
+        p.background = clamp(s.getInt("background", 0), BACKGROUND.length);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
         p.nightEnabled = s.getBoolean("nightEnabled", true);
         p.nightStart = s.getInt("nightStart", 23 * 60);
@@ -81,6 +89,7 @@ final class Prefs {
                 .putInt("theme", theme)
                 .putInt("brightness", brightness)
                 .putInt("anim", anim)
+                .putInt("background", background)
                 .putBoolean("use24h", use24h)
                 .putBoolean("nightEnabled", nightEnabled)
                 .putInt("nightStart", nightStart)

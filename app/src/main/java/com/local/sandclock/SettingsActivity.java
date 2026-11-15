@@ -188,6 +188,10 @@ public class SettingsActivity extends Activity {
             String value() { return Prefs.STYLES[prefs.style]; }
             void step(int d) { prefs.style = wrap(prefs.style + d, Prefs.STYLES.length); }
         });
+        addRow(list, new Row("Background") {
+            String value() { return prefs.style < 2 ? Prefs.BACKGROUND[prefs.background] : "— (black)"; }
+            void step(int d) { prefs.background = wrap(prefs.background + d, Prefs.BACKGROUND.length); }
+        });
         addRow(list, new Row("Grains fall at") {
             String value() {
                 int v = prefs.dropPos;
@@ -216,7 +220,11 @@ public class SettingsActivity extends Activity {
         });
         addRow(list, new Row("Falling sand") {
             String value() { return Prefs.ANIM[prefs.anim]; }
-            void step(int d) { prefs.anim = wrap(prefs.anim + d, Prefs.ANIM.length); }
+            void step(int d) {
+                int k = 0;
+                for (int i = 0; i < Prefs.ANIM_ORDER.length; i++) if (Prefs.ANIM_ORDER[i] == prefs.anim) k = i;
+                prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
+            }
         });
         addRow(list, new Row("Night schedule") {
             String value() { return prefs.nightEnabled ? "On" : "Off"; }

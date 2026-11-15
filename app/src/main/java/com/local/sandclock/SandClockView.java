@@ -37,7 +37,6 @@ public class SandClockView extends View {
     private static final long DRAIN_MAX_MS = 14000;
     private static final float NIGHT_DIM = 0.35f;
     private static final float GLOW_SAND = 0.55f;
-    private static final float DARK_BG = 0.4f;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Paint pixelPaint = new Paint(); // no filtering: hard pixel edges
@@ -313,7 +312,7 @@ public class SandClockView extends View {
         physics(now);
 
         int due = dueGrains(c);
-        if (due - spawned > 3 || prefs.anim == 2) {
+        if (due - spawned > 3 || prefs.anim == Prefs.ANIM_OFF) {
             while (spawned < due) { grid.dropInstant(dropColumn(spawned)); spawned++; }
         } else {
             while (spawned < due) { grid.spawn(dropColumn(spawned)); spawned++; }
@@ -335,13 +334,23 @@ public class SandClockView extends View {
         if (grid == null) {
             delay = 100;
         } else if (draining || grid.hasActive() || pendingSlots != null) {
-            delay = prefs.anim == 1 ? 33 : 66; // Smooth 30 fps, otherwise 15 fps
-        } else if (isNight() || prefs.anim == 2) {
+            delay = frameMs();
+        } else if (isNight() || prefs.anim == Prefs.ANIM_OFF) {
             delay = toNextMinute;
         } else {
             delay = Math.max(33, 1000 - System.currentTimeMillis() % 1000 - 300);
         }
         handler.postDelayed(tick, delay);
+    }
+
+    /** Time between frames while sand is moving. The physics always runs at 30 ticks a second;
+     *  fewer frames just means it is drawn less often (less work for the TV's display system). */
+    private int frameMs() {
+        switch (prefs.anim) {
+            case Prefs.ANIM_SMOOTH: return 33;  // 30 fps
+            case Prefs.ANIM_LOW: return 125;    // 8 fps
+            default: return 66;                 // 15 fps
+        }
     }
 
     // ---- the clock as pixels ----
@@ -429,8 +438,8 @@ public class SandClockView extends View {
     private boolean darkStyle() { return prefs.style < 2; }
 
     private void updateColors() {
-        int key = prefs.style * 10000 + prefs.theme * 1000 + prefs.brightness * 100
-                + Math.round(prefs.warmth * 20);
+        int key = prefs.background * 100000 + prefs.style * 10000 + prefs.theme * 1000
+                + prefs.brightness * 100 + Math.round(prefs.warmth * 20);
         if (key == colorKey) return;
         colorKey = key;
         float[] f = prefs.style == 0
@@ -439,7 +448,7 @@ public class SandClockView extends View {
                 ? new float[]{0.04f, 0.06f, 0.08f, 0.10f}           // near-black, faint texture
                 : new float[]{0.78f * GLOW_SAND, 0.9f * GLOW_SAND, GLOW_SAND, 1.12f * GLOW_SAND};
         for (int i = 0; i < 4; i++) shades[i] = prefs.sandColor(f[i]);
-        background = darkStyle() ? prefs.sandColor(DARK_BG) : Color.BLACK;
+        background = darkStyle() ? prefs.sandColor(Prefs.BACKGROUND_F[prefs.background]) : Color.BLACK;
         textCol = prefs.textColor(1f);
         grid.markAll();
         shownTime = ""; // redraw the digits in the new colour on the next step
