@@ -82,6 +82,12 @@ public class SandClockView extends View {
     /** Pour-in running: letters are drawn but not yet solid, so the sand rains through them. */
     private boolean pourPending;
 
+    // End-of-day vacuum: a hole opens X minutes before midnight and sucks everything away.
+    private boolean vacuumOn;
+    private long vacuumOpenedAt;      // uptime, for the hole's opening animation
+    private int holeX, holeY, holeR;
+    private final Paint holePaint = new Paint();
+
     private boolean draining;
     private long drainStart;
 
@@ -197,6 +203,7 @@ public class SandClockView extends View {
         gridDay = day;
         dropX = Math.round(frac * (cols - 1));
         draining = false;
+        vacuumOn = false;
         shakeUntil = -1;
         pendingSlots = null;
         px = new int[cols * rows];
@@ -210,7 +217,12 @@ public class SandClockView extends View {
         // animation off) the pile is placed at once and the letters push sand out of the way.
         spawned = dueGrains(c);
         int[] pile = grid.planPile(spawned, dropX, catchUpSlope(cols, rows, dropX), Math.round(swayAmp(spawned)));
-        boolean pour = prefs.pourIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && spawned > 0;
+        int vm = Prefs.VACUUM_MIN[prefs.vacuum];
+        long msNow = ((c.get(Calendar.HOUR_OF_DAY) * 60L + c.get(Calendar.MINUTE)) * 60
+                + c.get(Calendar.SECOND)) * 1000L;
+        boolean inVacuumWindow = vm > 0 && msNow >= 86_400_000L - vm * 60_000L;
+        boolean pour = prefs.pourIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && spawned > 0
+                && !inVacuumWindow;
         if (!pour) grid.fillHeights(pile);
         shownTime = "";
         renderClock(c, true);
@@ -274,7 +286,16 @@ public class SandClockView extends View {
         if (w == 0 || h == 0) return;
         long now = SystemClock.uptimeMillis();
 
+        long msOfDay = ((c.get(Calendar.HOUR_OF_DAY) * 60L + c.get(Calendar.MINUTE)) * 60
+                + c.get(Calendar.SECOND)) * 1000 + c.get(Calendar.MILLISECOND);
+        int vacMin = Prefs.VACUUM_MIN[prefs.vacuum];
+        long vacFrom = 86_400_000L - vacMin * 60_000L;
+
         if (grid == null) {
+            build(c, w, h);
+        } else if (dayKey(c) != gridDay && vacuumOn) {
+            // Midnight after the vacuum: the screen is empty, start the new day.
+            vacuumOn = false;
             build(c, w, h);
         } else if (dayKey(c) != gridDay && !draining) {
             if (!isNight() || prefs.nightFlip) {
@@ -289,6 +310,26 @@ public class SandClockView extends View {
             } else {
                 build(c, w, h);
             }
+        }
+
+        if (!vacuumOn && vacMin > 0 && msOfDay >= vacFrom && !draining && !previewMode
+                && (!isNight() || prefs.nightFlip)) {
+            startVacuum(now);
+        }
+        if (vacuumOn) {
+            // The pull spreads out from the hole like wind, reaching the whole screen 60 % of
+            // the way through, which leaves time for the last sand to arrive before midnight.
+            float f = Math.min(1f, (msOfDay - vacFrom) / (0.6f * vacMin * 60_000f));
+            float far = (float) Math.hypot(Math.max(holeX, grid.cols - holeX), Math.max(holeY, grid.rows - holeY));
+            grid.setVacuumReach(holeR + (far - holeR) * f * f);
+            String before = shownTime;
+            renderClock(c, false);
+            if (!shownTime.equals(before)) markWallsAsLids(newSlots); // letters stay wall-less
+            solidTime = shownTime;
+            physics(now);
+            int due = dueGrains(c);
+            while (spawned < due) { grid.spawn(dropColumn(spawned)); spawned++; }
+            return;
         }
 
         if (draining) {
@@ -347,6 +388,22 @@ public class SandClockView extends View {
         }
     }
 
+    /** Opens the hole at a random spot and takes the walls out of the letters. */
+    private void startVacuum(long now) {
+        vacuumOn = true;
+        vacuumOpenedAt = now;
+        java.util.Random r = new java.util.Random();
+        holeR = Math.max(3, grid.rows / 50);
+        holeX = grid.cols / 5 + r.nextInt(grid.cols * 3 / 5);
+        holeY = grid.rows * 2 / 5 + r.nextInt(grid.rows * 2 / 5);
+        for (Slot sl : solidSlots) grid.clearSolid(sl.cells);
+        solidSlots = new java.util.ArrayList<>();
+        pendingSlots = null;
+        pourPending = false;
+        markWallsAsLids(newSlots);
+        grid.startVacuum(holeX, holeY, holeR);
+    }
+
     private void physics(long now) {
         long tickMs = 1000 / GrainGrid.TICK_HZ;
         int ticks = (int) ((now - lastTickAt) / tickMs);
@@ -361,7 +418,7 @@ public class SandClockView extends View {
         long toNextMinute = 60_000 - (System.currentTimeMillis() % 60_000) + 30;
         if (grid == null) {
             delay = 100;
-        } else if (draining || grid.hasActive() || pendingSlots != null) {
+        } else if (draining || vacuumOn || grid.hasActive() || pendingSlots != null) {
             delay = frameMs();
         } else if (isNight() || prefs.anim == Prefs.ANIM_OFF) {
             delay = toNextMinute;
@@ -498,6 +555,38 @@ public class SandClockView extends View {
         return shades[(hsh >>> 28) & 3];
     }
 
+    /** The hole: a black opening with a turning, dashed pixel ring; it grows open over 2 s. */
+    private void drawHole(Canvas canvas) {
+        long t = SystemClock.uptimeMillis() - vacuumOpenedAt;
+        float r = holeR * Math.min(1f, t / 2000f);
+        if (r < 0.5f) return;
+        float top = dst.top;
+        int ring = isNight() ? dimColor(textCol) : textCol;
+        int phase = (int) (t / 120);
+        for (int dy = -holeR - 1; dy <= holeR + 1; dy++) {
+            for (int dx = -holeR - 1; dx <= holeR + 1; dx++) {
+                float d = (float) Math.sqrt(dx * dx + dy * dy);
+                int color;
+                if (d <= r - 0.5f) color = Color.BLACK;
+                else if (d <= r + 0.7f) {
+                    int a = (int) Math.round((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI) * 16);
+                    if (((a + phase) & 3) >= 2) continue; // dashes that turn
+                    color = ring;
+                } else continue;
+                int x = holeX + dx, y = holeY + dy;
+                if (x < 0 || y < 0 || x >= grid.cols || y >= grid.rows) continue;
+                holePaint.setColor(color);
+                canvas.drawRect(x * cell, top + y * cell, (x + 1) * cell, top + (y + 1) * cell, holePaint);
+            }
+        }
+    }
+
+    private static int dimColor(int c) {
+        float f = NIGHT_DIM;
+        return 0xFF000000 | ((int) (((c >> 16) & 0xFF) * f) << 16)
+                | ((int) (((c >> 8) & 0xFF) * f) << 8) | (int) ((c & 0xFF) * f);
+    }
+
     private void flushPixels() {
         int n = grid.takeChanges();
         if (n == 0) return;
@@ -530,7 +619,7 @@ public class SandClockView extends View {
         // Grid is anchored to the bottom of the screen (its top row may sit just off-screen).
         dst.set(0, h - Math.round(grid.rows * cell), Math.round(grid.cols * cell), h);
 
-        if (isNight() && !draining) {
+        if (isNight() && !draining && !vacuumOn) {
             if (prefs.nightStyle == 1) canvas.drawBitmap(textLayer, null, dst, dimPaint);
             return; // black screen: zones stay dark
         }
@@ -538,6 +627,7 @@ public class SandClockView extends View {
         flushPixels();
         Paint p = isNight() ? dimPaint : pixelPaint;
         canvas.drawBitmap(scene, null, dst, p);
+        if (vacuumOn) drawHole(canvas);
 
     }
 }

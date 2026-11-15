@@ -26,6 +26,11 @@ final class Prefs {
     int background = 0;
     /** When the screensaver starts, rain the day's sand so far down instead of placing it. */
     boolean pourIn = true;
+    /** End of the day: a hole opens this many minutes before midnight and sucks the sand away
+     *  (0 = the floor opens at midnight instead). */
+    static final String[] VACUUM = {"Off (floor opens)", "1 min", "2 min", "5 min", "10 min"};
+    static final int[] VACUUM_MIN = {0, 1, 2, 5, 10};
+    int vacuum = 3;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black sand", "Dark sand", "Glowing sand"};
@@ -71,6 +76,7 @@ final class Prefs {
         p.anim = clamp(s.getInt("anim", 0), ANIM.length);
         p.background = clamp(s.getInt("background", 0), BACKGROUND.length);
         p.pourIn = s.getBoolean("pourIn", true);
+        p.vacuum = clamp(s.getInt("vacuum", 3), VACUUM.length);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
         p.nightEnabled = s.getBoolean("nightEnabled", true);
         p.nightStart = s.getInt("nightStart", 23 * 60);
@@ -94,6 +100,7 @@ final class Prefs {
                 .putInt("anim", anim)
                 .putInt("background", background)
                 .putBoolean("pourIn", pourIn)
+                .putInt("vacuum", vacuum)
                 .putBoolean("use24h", use24h)
                 .putBoolean("nightEnabled", nightEnabled)
                 .putInt("nightStart", nightStart)

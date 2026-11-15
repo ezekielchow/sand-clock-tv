@@ -230,6 +230,10 @@ public class SettingsActivity extends Activity {
             String value() { return prefs.pourIn ? "On" : "Off"; }
             void step(int d) { prefs.pourIn = !prefs.pourIn; }
         });
+        addRow(list, new Row("Vacuum before midnight") {
+            String value() { return Prefs.VACUUM[prefs.vacuum]; }
+            void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
+        });
         addRow(list, new Row("Night schedule") {
             String value() { return prefs.nightEnabled ? "On" : "Off"; }
             void step(int d) { prefs.nightEnabled = !prefs.nightEnabled; }

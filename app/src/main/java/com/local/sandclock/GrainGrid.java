@@ -93,7 +93,7 @@ final class GrainGrid {
     }
 
     boolean hasActive() {
-        return nNext > 0 || pourLeft != null;
+        return nNext > 0 || pourLeft != null || holeX >= 0;
     }
 
     /** Empty cells from the top of column x down to the first sand or digit. */
@@ -173,9 +173,91 @@ final class GrainGrid {
         return j;
     }
 
+    // ---- end-of-day vacuum: a hole that sucks the sand away ----
+
+    private int holeX = -1, holeY, holeR;
+    private float reach;          // grains closer than this feel the suction (grows over time)
+    private int vacuumTicks;
+
+    /** Opens the hole. Its pull starts at nothing and is widened with setVacuumReach. */
+    void startVacuum(int x, int y, int radius) {
+        holeX = x;
+        holeY = y;
+        holeR = radius;
+        reach = 0;
+        vacuumTicks = 0;
+    }
+
+    void stopVacuum() { holeX = -1; }
+
+    boolean vacuuming() { return holeX >= 0; }
+
+    void setVacuumReach(float r) { reach = r; }
+
+    /** Grains near the hole are pulled toward it: slowly far away, faster close in. */
+    private int suck(int i, int x, int y) {
+        float dx = holeX - x, dy = holeY - y;
+        float d = (float) Math.sqrt(dx * dx + dy * dy);
+        if (d <= holeR) { // swallowed
+            c[i] = EMPTY;
+            vy[i] = 0;
+            mark(i);
+            wakeAround(x, y);
+            sandCount--;
+            return -1;
+        }
+        // Cells per tick: a slow drift far away (scaled to the screen so distant sand still
+        // arrives in time), much faster close in.
+        float speed = 0.2f * rows / 90f + 4f * holeR / d;
+        int steps = (int) speed + (chance() < speed - (int) speed ? 1 : 0);
+        int cur = i, cx = x, cy = y;
+        for (int s = 0; s < steps; s++) {
+            dx = holeX - cx;
+            dy = holeY - cy;
+            if (dx * dx + dy * dy <= holeR * holeR) break;
+            float ax = Math.abs(dx), ay = Math.abs(dy);
+            boolean alongX = chance() * (ax + ay) < ax; // head roughly toward the hole
+            int mx = alongX ? (int) Math.signum(dx) : 0;
+            int my = alongX ? 0 : (int) Math.signum(dy);
+            if (chance() < 0.12f) { // a gust: drift sideways for a moment
+                if (alongX) { mx = 0; my = coin() ? 1 : -1; } else { my = 0; mx = coin() ? 1 : -1; }
+            }
+            int nx = cx + mx, ny = cy + my;
+            if (!inside(nx, ny) || c[ny * cols + nx] != EMPTY) {
+                // Blocked: try the other direction toward the hole.
+                nx = cx + (alongX ? 0 : (int) Math.signum(dx));
+                ny = cy + (alongX ? (int) Math.signum(dy) : 0);
+                if (!inside(nx, ny) || c[ny * cols + nx] != EMPTY) break;
+            }
+            cur = move(cur, cx, cy, nx, ny);
+            cx = nx;
+            cy = ny;
+        }
+        return cur; // stays awake while the vacuum runs, even if blocked this tick
+    }
+
+    private boolean inside(int x, int y) {
+        return x >= 0 && x < cols && y >= 0 && y < rows;
+    }
+
+    /** Every half second, wake resting grains the widening pull has just reached. */
+    private void wakeInReach() {
+        if (holeX < 0 || vacuumTicks++ % 15 != 0) return;
+        float r2 = reach * reach;
+        for (int i = 0; i < c.length; i++) {
+            if (c[i] != SAND || queued[i]) continue;
+            float dx = holeX - i % cols, dy = holeY - i / cols;
+            if (dx * dx + dy * dy <= r2) wakeIdx(i);
+        }
+    }
+
     /** One step for the grain at i. Returns its new index, or -1 if it rests (or left). */
     private int step(int i) {
         int x = i % cols, y = i / cols;
+        if (holeX >= 0) {
+            float dx = holeX - x, dy = holeY - y;
+            if (dx * dx + dy * dy <= reach * reach) return suck(i, x, y);
+        }
         if (isEmpty(x, y + 1)) {
             float v = Math.min(maxSpeed, vy[i] + gravity);
             vy[i] = v;
@@ -223,6 +305,7 @@ final class GrainGrid {
             if (j >= 0) wakeIdx(j); // still moving: check again next tick
         }
         pourStep();
+        wakeInReach();
     }
 
     // ---- adding grains ----
