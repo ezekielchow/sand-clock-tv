@@ -67,6 +67,7 @@ final class GrainGrid {
         queued = new boolean[cols * rows];
         stamp = new int[cols * rows];
         seen = new int[cols * rows];
+        target = new int[cols * rows];
         this.seed = (int) (seed * 2654435761L) | 1;
         // A fall from the top to the bottom takes about 1.3 s (39 ticks).
         gravity = 2f * rows / (39f * 39f);
@@ -92,7 +93,7 @@ final class GrainGrid {
     }
 
     boolean hasActive() {
-        return nNext > 0;
+        return nNext > 0 || pourLeft != null;
     }
 
     /** Empty cells from the top of column x down to the first sand or digit. */
@@ -221,6 +222,7 @@ final class GrainGrid {
             int j = step(i);
             if (j >= 0) wakeIdx(j); // still moving: check again next tick
         }
+        pourStep();
     }
 
     // ---- adding grains ----
@@ -275,6 +277,11 @@ final class GrainGrid {
      * `plateau`. Returns the number placed.
      */
     int fill(int n, int x0, float slope, int plateau) {
+        return fillHeights(planPile(n, x0, slope, plateau));
+    }
+
+    /** Column heights of the pile n grains would form (see fill). */
+    int[] planPile(int n, int x0, float slope, int plateau) {
         int[] off = new int[cols]; // how far below the peak each column's surface sits
         for (int x = x0 + 1; x < cols; x++) {
             off[x] = off[x - 1] + (x - x0 > plateau && chance() < slope ? 1 : 0);
@@ -306,6 +313,11 @@ final class GrainGrid {
                 }
             }
         }
+        return h;
+    }
+
+    /** Writes a planned pile straight into the grid. Returns the number placed. */
+    int fillHeights(int[] h) {
         int placed = 0;
         for (int x = 0; x < cols; x++) {
             for (int y = rows - h[x]; y < rows; y++) c[y * cols + x] = SAND;
@@ -314,6 +326,58 @@ final class GrainGrid {
         sandCount += placed;
         allChanged = true;
         return placed;
+    }
+
+    // ---- pour-in: the sand so far rains down across the whole width ----
+
+    private int[] pourLeft;   // grains still to release per column
+    private int pourTicks;    // ticks left in the pour
+
+    /** Rains down a planned pile over `ticks` physics ticks; physics settles it. */
+    void startPour(int[] h, int ticks) {
+        pourLeft = h.clone();
+        pourTicks = ticks;
+    }
+
+    boolean pouring() { return pourLeft != null; }
+
+    /** Releases this tick's grains: each column gets its share so all finish together. */
+    private void pourStep() {
+        if (pourLeft == null) return;
+        int ticksLeft = Math.max(1, pourTicks);
+        pourTicks--;
+        boolean any = false;
+        for (int x = 0; x < cols; x++) {
+            int q = pourLeft[x];
+            if (q <= 0) continue;
+            any = true;
+            if (c[x] != EMPTY) {
+                // This column is full to the top: hand its grains to the nearest open one.
+                for (int d = 1; d < cols && pourLeft[x] > 0; d++) {
+                    for (int nx : new int[]{x - d, x + d}) {
+                        if (nx >= 0 && nx < cols && c[nx] == EMPTY) {
+                            pourLeft[nx] += q;
+                            pourLeft[x] = 0;
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+            int want = (int) (q / (float) ticksLeft + chance()); // a little randomness: rain
+            for (int y = 0; y < want; y++) {
+                int i = y * cols + x;
+                if (y >= rows || c[i] != EMPTY) break;
+                c[i] = SAND;
+                vy[i] = gravity;
+                sandCount++;
+                mark(i);
+                wakeIdx(i);
+                pourLeft[x]--;
+            }
+        }
+        // Done, or a column stays blocked long after the pour should have finished.
+        if (!any || pourTicks < -300) pourLeft = null;
     }
 
     private long pileSize(int[] off, int peak) {
@@ -325,7 +389,8 @@ final class GrainGrid {
     // ---- the clock's digits as solid cells ----
 
     private int[] searchQueue = new int[1024];
-    private final int[] seen;
+    private final int[] seen;   // cells visited by the current search
+    private final int[] target; // cells of the letter being made solid (by setSolid call id)
     private int seenId;
 
     /**
@@ -334,7 +399,7 @@ final class GrainGrid {
      */
     void setSolid(int[] cells) {
         int id = ++seenId;
-        for (int i : cells) seen[i] = -id; // target cells: not a valid destination
+        for (int i : cells) target[i] = id; // the letter's own cells: can't end up there
         for (int i : cells) {
             if (c[i] != SAND) continue;
             c[i] = EMPTY;
@@ -358,16 +423,17 @@ final class GrainGrid {
     private int nearestFree(int start, int targetId) {
         int id = ++seenId;
         int head = 0, tail = 0;
-        // The start cell is part of the new letter: it keeps its "target" mark, so no later
-        // grain can be placed into it (it becomes wall a moment later and the grain would vanish).
         searchQueue[tail++] = start;
+        seen[start] = id;
         while (head < tail && head < 60_000) {
             int i = searchQueue[head++];
             int x = i % cols, y = i / cols;
             int[] nb = {y > 0 ? i - cols : -1, x > 0 ? i - 1 : -1, x < cols - 1 ? i + 1 : -1, y < rows - 1 ? i + cols : -1};
             for (int j : nb) {
-                if (j < 0 || seen[j] == id || seen[j] == -targetId || c[j] == SOLID) continue;
-                if (c[j] == EMPTY) return j;
+                // The search may pass through the letter's own cells (a grain deep inside a thick
+                // stroke must still get out) but never stop there: they become wall next.
+                if (j < 0 || seen[j] == id || c[j] == SOLID) continue;
+                if (c[j] == EMPTY && target[j] != targetId) return j;
                 seen[j] = id;
                 if (tail == searchQueue.length) searchQueue = Arrays.copyOf(searchQueue, tail * 2);
                 searchQueue[tail++] = j;

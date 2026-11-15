@@ -226,6 +226,10 @@ public class SettingsActivity extends Activity {
                 prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
             }
         });
+        addRow(list, new Row("Pour in at start") {
+            String value() { return prefs.pourIn ? "On" : "Off"; }
+            void step(int d) { prefs.pourIn = !prefs.pourIn; }
+        });
         addRow(list, new Row("Night schedule") {
             String value() { return prefs.nightEnabled ? "On" : "Off"; }
             void step(int d) { prefs.nightEnabled = !prefs.nightEnabled; }

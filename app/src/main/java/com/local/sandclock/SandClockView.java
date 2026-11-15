@@ -32,6 +32,8 @@ public class SandClockView extends View {
     }
 
     private static final int GRAINS_PER_DAY = 86_400;
+    /** Pour-in at start: the day's sand so far is released over this many ticks (3 s). */
+    private static final int POUR_TICKS = 90;
     private static final long SHAKE_MS = 900;
     /** A full screen pours out in about 9 s (one row per tick); allow some slack. */
     private static final long DRAIN_MAX_MS = 14000;
@@ -76,6 +78,9 @@ public class SandClockView extends View {
     /** The time the solid digits in the grid currently represent. */
     private String solidTime = "";
     private long shakeUntil = -1;
+
+    /** Pour-in running: letters are drawn but not yet solid, so the sand rains through them. */
+    private boolean pourPending;
 
     private boolean draining;
     private long drainStart;
@@ -200,15 +205,29 @@ public class SandClockView extends View {
         textLayer = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
         colorKey = Integer.MIN_VALUE;
 
-        // Catch up to now in one go (no digits yet), then put the digits in: sand where they
-        // appear is pushed out on top of them and tumbles off.
+        // Catch up to now. Pour-in: the clock appears first, then all the sand so far rains
+        // down across the screen and settles around and into the letters. Otherwise (night,
+        // animation off) the pile is placed at once and the letters push sand out of the way.
         spawned = dueGrains(c);
-        grid.fill(spawned, dropX, catchUpSlope(cols, rows, dropX), Math.round(swayAmp(spawned)));
+        int[] pile = grid.planPile(spawned, dropX, catchUpSlope(cols, rows, dropX), Math.round(swayAmp(spawned)));
+        boolean pour = prefs.pourIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && spawned > 0;
+        if (!pour) grid.fillHeights(pile);
         shownTime = "";
         renderClock(c, true);
         solidTime = shownTime;
-        solidSlots = newSlots;
-        for (Slot sl : solidSlots) grid.setSolid(sl.cells);
+        pourPending = pour;
+        if (pour) {
+            // Letters are drawn now but only become solid once the sand has settled, so the
+            // pile builds from the floor up instead of stacking on the letters.
+            solidSlots = new java.util.ArrayList<>();
+            pendingSlots = newSlots;
+            shakeUntil = Long.MAX_VALUE;
+            markWallsAsLids(newSlots);
+            grid.startPour(pile, POUR_TICKS);
+        } else {
+            solidSlots = newSlots;
+            for (Slot sl : solidSlots) grid.setSolid(sl.cells);
+        }
         lastTickAt = SystemClock.uptimeMillis();
     }
 
@@ -302,11 +321,20 @@ public class SandClockView extends View {
             pendingSlots = new java.util.ArrayList<>();
             for (Slot sl : newSlots) if (!kept.contains(sl.id)) pendingSlots.add(sl);
             shakeUntil = now + SHAKE_MS;
+            if (pourPending) { // still pouring: these letters also wait, drawn but not solid
+                shakeUntil = Long.MAX_VALUE;
+                markWallsAsLids(newSlots);
+            }
+        }
+        if (pourPending && !grid.pouring()) {
+            pourPending = false;
+            shakeUntil = now + 700; // let the last grains land, then the letters turn solid
         }
         if (pendingSlots != null && now >= shakeUntil) {
             for (Slot sl : pendingSlots) grid.setSolid(sl.cells);
             solidSlots.addAll(pendingSlots);
             pendingSlots = null;
+            renderClock(c, true); // walls are solid now: back to drawing only top edges as "lids"
         }
 
         physics(now);
@@ -392,6 +420,12 @@ public class SandClockView extends View {
         }
         grid.markAll(); // repaint letters (walls and top edges)
         textLayer.setPixels(textPx, 0, cols, 0, 0, cols, rows);
+    }
+
+    /** Draws letters' walls without them being solid yet (during the pour-in). */
+    private void markWallsAsLids(java.util.List<Slot> slots) {
+        for (Slot sl : slots) for (int i : sl.cells) lid[i] = true;
+        grid.markAll();
     }
 
     private void addSlots(java.util.List<Slot> out, String part, String s, int left, int top, int scale) {

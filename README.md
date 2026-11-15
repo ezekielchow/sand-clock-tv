@@ -101,6 +101,7 @@ Everything works with ◀ ▶ (no OK button needed); ▶ also opens the action r
 | Brightness | Low, Medium, High (dims the drawn pixels) |
 | Clock | 12-hour / 24-hour |
 | Falling sand | Low (8 fps), Gentle (15 fps), Smooth (30 fps), Off (sand lands once a minute). Fewer frames = less work for the TV |
+| Pour in at start | On: when the screensaver starts, the day's sand so far rains down across the screen for about 3 s and settles around and into the letters. Off: the pile appears at once |
 | Night schedule | On/Off, start and end in 30-minute steps |
 | At night show | Black screen, Dim clock |
 | Lower backlight at night | drops the backlight further during night hours |

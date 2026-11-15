@@ -24,6 +24,8 @@ final class Prefs {
     static final String[] BACKGROUND = {"Normal", "Dim"};
     static final float[] BACKGROUND_F = {0.4f, 0.2f};
     int background = 0;
+    /** When the screensaver starts, rain the day's sand so far down instead of placing it. */
+    boolean pourIn = true;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black sand", "Dark sand", "Glowing sand"};
@@ -68,6 +70,7 @@ final class Prefs {
         p.brightness = clamp(s.getInt("brightness", 1), BRIGHTNESS.length);
         p.anim = clamp(s.getInt("anim", 0), ANIM.length);
         p.background = clamp(s.getInt("background", 0), BACKGROUND.length);
+        p.pourIn = s.getBoolean("pourIn", true);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
         p.nightEnabled = s.getBoolean("nightEnabled", true);
         p.nightStart = s.getInt("nightStart", 23 * 60);
@@ -90,6 +93,7 @@ final class Prefs {
                 .putInt("brightness", brightness)
                 .putInt("anim", anim)
                 .putInt("background", background)
+                .putBoolean("pourIn", pourIn)
                 .putBoolean("use24h", use24h)
                 .putBoolean("nightEnabled", nightEnabled)
                 .putInt("nightStart", nightStart)
