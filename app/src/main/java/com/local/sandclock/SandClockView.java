@@ -94,7 +94,20 @@ public class SandClockView extends SceneView {
     private int[] px, textPx;
     private int colorKey = Integer.MIN_VALUE;
     private int background = Color.BLACK;
-    private final int[] shades = new int[4];
+    /** Sand colours per hour layer (0 = unknown, 1..24) and texture shade (4). */
+    private final int[][] shades = new int[25][4];
+    /** Hour layers cycle through these tones (brightness, warm(+)/cool(-) shift). */
+    private static final float[] LAYER_B = {1.00f, 0.84f, 1.10f, 0.92f, 0.78f, 1.04f};
+    private static final float[] LAYER_H = {0.00f, 0.10f, -0.08f, 0.05f, 0.00f, -0.05f};
+
+    // Sun, moon and glints: a few cells drawn over the sky or the pile's surface.
+    private int[] sky = new int[0];          // colour over an empty cell, 0 = none
+    private int[] skyCells = new int[0];
+    private int nSky;
+    private int skyKey = -1;
+    private int glint = -1, glintCol;
+    private final java.util.Random rnd = new java.util.Random();
+    private final Paint starPaint = new Paint();
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -197,6 +210,10 @@ public class SandClockView extends SceneView {
         shakeUntil = -1;
         pendingSlots = null;
         px = new int[cols * rows];
+        sky = new int[cols * rows];
+        nSky = 0;
+        skyKey = -1;
+        glint = -1;
         textPx = new int[cols * rows];
         scene = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
         textLayer = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
@@ -333,6 +350,11 @@ public class SandClockView extends SceneView {
             }
         }
 
+        if (grid != null) {
+            updateColors(); // also at night, so the dim clock's moon has its colours
+            decorate(c);
+        }
+
         if (!vacuumOn && !draining && !previewMode && (demoStart >= 0
                 || (vacMin > 0 && msOfDay >= vacFrom && (!isNight() || prefs.nightFlip)))) {
             startVacuum(now);
@@ -368,7 +390,7 @@ public class SandClockView extends SceneView {
             solidTime = shownTime;
             physics(now);
             int due = dueGrains(c);
-            while (spawned < due) { grid.spawn(dropColumn(spawned)); spawned++; }
+            while (spawned < due) { spawnNext(false); }
             return;
         }
 
@@ -415,9 +437,112 @@ public class SandClockView extends SceneView {
 
         int due = dueGrains(c);
         if (due - spawned > 3 || prefs.anim == Prefs.ANIM_OFF) {
-            while (spawned < due) { grid.dropInstant(dropColumn(spawned)); spawned++; }
+            while (spawned < due) { spawnNext(true); }
         } else {
-            while (spawned < due) { grid.spawn(dropColumn(spawned)); spawned++; }
+            while (spawned < due) { spawnNext(false); }
+        }
+    }
+
+    /** Releases the next grain of the day, tagged with the hour it falls in. */
+    private void spawnNext(boolean instant) {
+        grid.spawnLayer = GrainGrid.layerOf(spawned);
+        if (instant) grid.dropInstant(dropColumn(spawned));
+        else grid.spawn(dropColumn(spawned));
+        spawned++;
+    }
+
+    // ---- sun, moon, glints ----
+
+    /** Keeps the sun or moon in place and sets a surface grain glinting now and then. */
+    private void decorate(Calendar c) {
+        updateSky(c);
+        if (glint >= 0) { grid.markCell(glint); glint = -1; }
+        if (isNight() || draining || vacuumOn || prefs.anim == Prefs.ANIM_OFF) return;
+        if (rnd.nextFloat() < 0.4f) {
+            int x = rnd.nextInt(grid.cols);
+            int y = grid.freeDepth(x);
+            if (y < grid.rows && grid.c[y * grid.cols + x] == GrainGrid.SAND) {
+                glint = y * grid.cols + x;
+                grid.markCell(glint);
+            }
+        }
+    }
+
+    /**
+     * The sun crosses the sky from sunrise to sunset (the chosen city, else 07:00 to 19:15)
+     * and sets behind the pile; the moon, in tonight's real phase, follows until sunrise.
+     * Recomputed once a minute; only its cells are redrawn.
+     */
+    private void updateSky(Calendar c) {
+        int m = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE);
+        int key = prefs.sunMoon ? m + colorKey * 1441 : -2;
+        if (key == skyKey) return;
+        skyKey = key;
+        for (int k = 0; k < nSky; k++) { sky[skyCells[k]] = 0; grid.markCell(skyCells[k]); }
+        nSky = 0;
+        if (!prefs.sunMoon) return;
+        int[] t = prefs.city > 0 ? Sun.times(prefs.city, c) : new int[]{420, 1155};
+        int rise = t[0], set = t[1];
+        boolean sun = m >= rise && m < set;
+        float p;
+        if (sun) {
+            p = (m - rise) / (float) Math.max(1, set - rise);
+        } else {
+            int mm = m < rise ? m + 1440 : m;
+            p = (mm - set) / (float) Math.max(1, 1440 - set + rise);
+        }
+        int cols = grid.cols, rows = grid.rows;
+        int horizon = Math.round(rows * 0.92f), top = Math.round(rows * 0.1f);
+        int cx = Math.round(cols * (0.06f + 0.88f * p));
+        int cy = Math.round(horizon - (horizon - top) * (float) Math.sin(Math.PI * p));
+        int r = Math.max(3, Math.round(rows * (sun ? 0.026f : 0.022f)));
+        int core = prefs.color(sun ? 0xFFD27A : 0xE8E4D0, sun ? 1f : 0.85f);
+        int edge = prefs.color(sun ? 0xF0A850 : 0xC8C4B4, sun ? 1f : 0.85f);
+        double phase = sun ? 0 : moonPhase(c.getTimeInMillis());
+        if (skyCells.length < (2 * r + 1) * (2 * r + 1)) skyCells = new int[(2 * r + 1) * (2 * r + 1)];
+        for (int dy = -r; dy <= r; dy++) {
+            double w = Math.sqrt(Math.max(0, r * r - dy * dy + r * 0.8));
+            for (int dx = -r; dx <= r; dx++) {
+                double d = Math.sqrt(dx * dx + dy * dy);
+                if (d > r + 0.4) continue;
+                if (!sun) {
+                    // Lit part only: waxing lit on the right, waning on the left.
+                    double term = w * Math.cos(2 * Math.PI * phase);
+                    boolean lit = phase < 0.5 ? dx >= term : dx <= -term;
+                    if (!lit) continue;
+                }
+                int x = cx + dx, y = cy + dy;
+                if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+                int i = y * cols + x;
+                sky[i] = d > r - 1.2 ? edge : core;
+                skyCells[nSky++] = i;
+                grid.markCell(i);
+            }
+        }
+    }
+
+    /** Moon age as a fraction of the cycle: 0 new, 0.5 full. */
+    private static double moonPhase(long ms) {
+        double days = ms / 86_400_000.0 + 2440587.5 - 2451550.1;
+        double f = days / 29.530588853;
+        return f - Math.floor(f);
+    }
+
+    /** Dim night clock: a few faint stars and the moon. */
+    private void drawNightSky(Canvas canvas) {
+        java.util.Random r = new java.util.Random(gridDay * 7L + 3);
+        starPaint.setColor(prefs.nightBacklight ? 0xFF2C2C34 : 0xFF3C3C48);
+        int band = Math.round(grid.rows * 0.6f);
+        for (int k = 0; k < 40; k++) {
+            int x = r.nextInt(grid.cols), y = r.nextInt(band);
+            float l = x * cell, t = dst.top + y * cell;
+            canvas.drawRect(l, t, l + cell, t + cell, starPaint);
+        }
+        for (int k = 0; k < nSky; k++) {
+            int i = skyCells[k];
+            starPaint.setColor(dimColor(sky[i]));
+            float l = (i % grid.cols) * cell, t = dst.top + (i / grid.cols) * cell;
+            canvas.drawRect(l, t, l + cell, t + cell, starPaint);
         }
     }
 
@@ -521,7 +646,17 @@ public class SandClockView extends SceneView {
                 : prefs.style == 1
                 ? new float[]{0.04f, 0.06f, 0.08f, 0.10f}           // near-black, faint texture
                 : new float[]{0.78f * GLOW_SAND, 0.9f * GLOW_SAND, GLOW_SAND, 1.12f * GLOW_SAND};
-        for (int i = 0; i < 4; i++) shades[i] = prefs.sandColor(f[i]);
+        int base = prefs.sandRgb();
+        for (int l = 0; l < shades.length; l++) {
+            int band = prefs.sandLayers && l > 0 ? (l - 1) % LAYER_B.length : 0;
+            float b = LAYER_B[band], hs = LAYER_H[band];
+            int rr = Math.min(255, Math.round(((base >> 16) & 0xFF) * b * (1 + hs)));
+            int gg = Math.min(255, Math.round(((base >> 8) & 0xFF) * b));
+            int bb = Math.min(255, Math.round((base & 0xFF) * b * (1 - hs)));
+            int tinted = (rr << 16) | (gg << 8) | bb;
+            for (int i = 0; i < 4; i++) shades[l][i] = prefs.color(tinted, f[i]);
+        }
+        glintCol = prefs.color(0xFFF4DC, 1f);
         background = darkStyle() ? prefs.sandColor(Prefs.BACKGROUND_F[prefs.background]) : Color.BLACK;
         textCol = prefs.textColor(1f);
         grid.markAll();
@@ -533,9 +668,10 @@ public class SandClockView extends SceneView {
         // Letter walls and top edges, drawn right in the sand picture. Top edges stay drawn
         // even with sand passing through, so outlines stay whole inside the pile.
         if (v == GrainGrid.SOLID || (lid.length > i && lid[i])) return textCol;
-        if (v != GrainGrid.SAND) return background;
+        if (v != GrainGrid.SAND) return sky.length > i && sky[i] != 0 ? sky[i] : background;
+        if (i == glint) return glintCol;
         int hsh = i * 0x9E3779B1;
-        return shades[(hsh >>> 28) & 3];
+        return shades[grid.layer[i]][(hsh >>> 28) & 3];
     }
 
     /** The hole: a black opening with a turning, dashed pixel ring; it grows open over 2 s. */
@@ -603,7 +739,10 @@ public class SandClockView extends SceneView {
         dst.set(0, h - Math.round(grid.rows * cell), Math.round(grid.cols * cell), h);
 
         if (isNight() && !draining && !vacuumOn) {
-            if (prefs.nightStyle == 1) canvas.drawBitmap(textLayer, null, dst, dimPaint);
+            if (prefs.nightStyle == 1) {
+                if (prefs.sunMoon) drawNightSky(canvas);
+                canvas.drawBitmap(textLayer, null, dst, dimPaint);
+            }
             return; // black screen: zones stay dark
         }
         updateColors();

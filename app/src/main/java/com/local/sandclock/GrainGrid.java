@@ -55,6 +55,20 @@ final class GrainGrid {
     private int nChanged;
     private boolean allChanged = true;
 
+    /**
+     * The hour each grain fell in, 1..24 (0 = unknown), so the pile shows the day in layers
+     * like a sand-art bottle. It moves with the grain.
+     */
+    final byte[] layer;
+    /** Layer given to grains released by spawn/dropInstant. */
+    byte spawnLayer;
+    private byte[] simLayer;        // layers of the last simulateDay pile
+    private byte[][] pourLayers;    // per column, layers of the grains to rain, bottom first
+    private int[] pourLayerNext;
+
+    /** Layer of the n-th grain of the day (grain n falls at second n). */
+    static byte layerOf(int n) { return (byte) (1 + Math.min(23, n / 3600)); }
+
     /** Midnight: the bottom opens and the sand pours out. */
     boolean floorOpen;
     int sandCount;
@@ -64,6 +78,7 @@ final class GrainGrid {
         this.rows = rows;
         this.slide2 = slide2;
         c = new byte[cols * rows];
+        layer = new byte[cols * rows];
         vy = new float[cols * rows];
         queued = new boolean[cols * rows];
         stamp = new int[cols * rows];
@@ -118,6 +133,9 @@ final class GrainGrid {
 
     void markAll() { allChanged = true; }
 
+    /** Redraw this cell (something drawn over the sky changed). */
+    void markCell(int i) { mark(i); }
+
     /** Returns -1 if everything changed, else the number of entries in changedCells(). */
     int takeChanges() {
         if (allChanged) {
@@ -169,6 +187,7 @@ final class GrainGrid {
         }
         int j = ny * cols + nx;
         c[j] = SAND;
+        layer[j] = layer[i];
         vy[j] = v;
         stamp[j] = tickId;
         mark(j);
@@ -402,6 +421,7 @@ final class GrainGrid {
     boolean spawn(int x) {
         if (!isEmpty(x, 0)) return false;
         c[x] = SAND;
+        layer[x] = spawnLayer;
         vy[x] = gravity;
         sandCount++;
         mark(x);
@@ -417,6 +437,7 @@ final class GrainGrid {
         floorOpen = open;
         if (i < 0) return false;
         c[i] = SAND;
+        layer[i] = spawnLayer;
         sandCount++;
         mark(i);
         return true;
@@ -460,9 +481,10 @@ final class GrainGrid {
      */
     byte[] simulateDay(int n, Stream stream) {
         byte[] g = c.clone();
+        simLayer = new byte[g.length];
         for (int k = 0; k < n; k++) {
             int i = settle(g, stream.column(k));
-            if (i >= 0) g[i] = SAND;
+            if (i >= 0) { g[i] = SAND; simLayer[i] = layerOf(k); }
         }
         return g;
     }
@@ -470,9 +492,14 @@ final class GrainGrid {
     /** Puts a simulated pile straight into the live grid. */
     void applyPile(byte[] g) {
         for (int i = 0; i < c.length; i++) {
-            if (g[i] == SAND && c[i] == EMPTY) { c[i] = SAND; sandCount++; }
+            if (g[i] == SAND && c[i] == EMPTY) {
+                c[i] = SAND;
+                if (simLayer != null) layer[i] = simLayer[i];
+                sandCount++;
+            }
         }
         allChanged = true;
+        simLayer = null;
     }
 
     /**
@@ -491,6 +518,16 @@ final class GrainGrid {
             firstSolid[x] = y;
         }
         int[] schedule = new int[cols * ticks];
+        // Each column rains its grains lowest-spot first, so they carry those spots' layers.
+        int[] count = new int[cols];
+        for (int i = 0; i < g.length; i++) {
+            int x = i % cols;
+            if (g[i] == SAND && c[i] == EMPTY && i / cols < firstSolid[x]) count[x]++;
+        }
+        pourLayers = new byte[cols][];
+        for (int x = 0; x < cols; x++) pourLayers[x] = new byte[count[x]];
+        pourLayerNext = new int[cols];
+        int[] fill = new int[cols];
         int nShadow = 0;
         int[] shadow = new int[64];
         // Bottom rows first, so shadow cells come out sorted by when they are due.
@@ -501,6 +538,7 @@ final class GrainGrid {
                 if (g[i] != SAND || c[i] != EMPTY) continue;
                 if (y < firstSolid[x]) {
                     schedule[x * ticks + t]++;
+                    if (simLayer != null) pourLayers[x][fill[x]++] = simLayer[i];
                 } else {
                     if (nShadow == shadow.length) shadow = Arrays.copyOf(shadow, nShadow * 2);
                     shadow[nShadow++] = i;
@@ -528,6 +566,7 @@ final class GrainGrid {
             if (!supported && t < ticks + 60) break; // wait for the sand below to arrive
             if (c[i] == EMPTY) {
                 c[i] = SAND;
+                if (simLayer != null) layer[i] = simLayer[i];
                 sandCount++;
                 mark(i);
             }
@@ -584,6 +623,9 @@ final class GrainGrid {
                 int i = y * cols + x;
                 if (y >= rows || c[i] != EMPTY) break;
                 c[i] = SAND;
+                byte[] pl = pourLayers != null ? pourLayers[x] : null;
+                if (pl != null && pl.length > 0) layer[i] = pl[Math.min(pl.length - 1, pourLayerNext[x]++)];
+                else layer[i] = spawnLayer;
                 vy[i] = gravity;
                 sandCount++;
                 mark(i);
@@ -597,6 +639,8 @@ final class GrainGrid {
             pourLeft = null;
             pourSchedule = null;
             shadowCells = null;
+            pourLayers = null;
+            simLayer = null;
             wakeSurface(); // nothing left hanging next to empty space
         }
     }
@@ -637,6 +681,7 @@ final class GrainGrid {
             int j = nearestFree(i, id);
             if (j >= 0) {
                 c[j] = SAND;
+                layer[j] = layer[i];
                 mark(j);
                 wakeIdx(j);
             } else {

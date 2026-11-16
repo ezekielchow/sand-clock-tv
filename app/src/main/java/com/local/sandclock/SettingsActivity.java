@@ -29,6 +29,7 @@ public class SettingsActivity extends Activity {
         final String label;
         TextView valueView;
         boolean repeatable = true; // false: holding the button down doesn't repeat it
+        int scene = -1;            // a scene's own setting: the preview switches to that scene
         Row(String label) { this.label = label; }
         abstract String value();
         abstract void step(int dir);
@@ -150,6 +151,144 @@ public class SettingsActivity extends Activity {
         status.setPadding(dp(12), 0, 0, dp(12));
         list.addView(status);
 
+        addHeader(list, "Scenes");
+        // Scenes: every combination of the scene bits (1 = sand, 2 = ocean), both first.
+        addRow(list, new Row("Scenes") {
+            final int[] options = {3, 1, 2};
+            String value() {
+                if (prefs.scenes == 3) return "Sand + Ocean (random)";
+                return SceneView.NAMES[prefs.scenes == 2 ? 1 : 0] + " only";
+            }
+            void step(int d) {
+                int k = 0;
+                for (int i = 0; i < options.length; i++) if (options[i] == prefs.scenes) k = i;
+                prefs.scenes = options[wrap(k + d, options.length)];
+                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.pick(prefs));
+            }
+        });
+        addRow(list, new Row("Preview shows") {
+            String value() { return SceneView.NAMES[previewScene]; }
+            void step(int d) { showPreview(wrap(previewScene + d, SceneView.NAMES.length)); }
+        });
+        addHeader(list, "General");
+        addRow(list, new Row("Clock") {
+            String value() { return prefs.use24h ? "24-hour" : "12-hour"; }
+            void step(int d) { prefs.use24h = !prefs.use24h; }
+        });
+        addRow(list, new Row("Style") {
+            String value() { return Prefs.STYLES[prefs.style]; }
+            void step(int d) { prefs.style = wrap(prefs.style + d, Prefs.STYLES.length); }
+        });
+        addRow(list, new Row("Background") {
+            String value() { return prefs.style < 2 ? Prefs.BACKGROUND[prefs.background] : "— (black)"; }
+            void step(int d) { prefs.background = wrap(prefs.background + d, Prefs.BACKGROUND.length); }
+        });
+        addRow(list, new Row("Colour") {
+            String value() { return Prefs.THEMES[prefs.theme]; }
+            void step(int d) { prefs.theme = wrap(prefs.theme + d, Prefs.THEMES.length); }
+        });
+        addRow(list, new Row("Brightness") {
+            String value() { return Prefs.BRIGHTNESS[prefs.brightness]; }
+            void step(int d) { prefs.brightness = wrap(prefs.brightness + d, Prefs.BRIGHTNESS.length); }
+        });
+        addRow(list, new Row("Animation") {
+            String value() { return Prefs.ANIM[prefs.anim]; }
+            void step(int d) {
+                int k = 0;
+                for (int i = 0; i < Prefs.ANIM_ORDER.length; i++) if (Prefs.ANIM_ORDER[i] == prefs.anim) k = i;
+                prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
+            }
+        });
+        addRow(list, new Row("Evening warmth") {
+            String value() {
+                if (prefs.city == 0) return "Off";
+                int set = Sun.times(prefs.city, java.util.Calendar.getInstance())[1];
+                return Sun.CITIES[prefs.city] + " · sunset " + Prefs.formatMinutes(set);
+            }
+            void step(int d) { prefs.city = wrap(prefs.city + d, Sun.CITIES.length); }
+        });
+        addHeader(list, "Sand");
+        addRow(list, scene(SceneView.SAND, new Row("Grains fall at") {
+            String value() {
+                int v = prefs.dropPos;
+                if (v == Prefs.DROP_RANDOM) return "Random (new each day)";
+                return v + "%" + (v == 50 ? " (centre)" : v < 50 ? " (left)" : " (right)");
+            }
+            void step(int d) {
+                // 15 %, 20 %, ... 85 %, then Random.
+                int n = (GrainGrid.MAX_DROP - GrainGrid.MIN_DROP) / 5 + 1;
+                int i = prefs.dropPos == Prefs.DROP_RANDOM ? n : (prefs.dropPos - GrainGrid.MIN_DROP) / 5;
+                i = wrap(i + d, n + 1);
+                prefs.dropPos = i == n ? Prefs.DROP_RANDOM : GrainGrid.MIN_DROP + 5 * i;
+            }
+        }));
+        addRow(list, scene(SceneView.SAND, new Row("Stream sway") {
+            String value() { return Prefs.SWAY[prefs.sway]; }
+            void step(int d) { prefs.sway = wrap(prefs.sway + d, Prefs.SWAY.length); }
+        }));
+        addRow(list, scene(SceneView.SAND, new Row("Hour layers") {
+            String value() { return prefs.sandLayers ? "On" : "Off"; }
+            void step(int d) { prefs.sandLayers = !prefs.sandLayers; }
+        }));
+        addRow(list, scene(SceneView.SAND, new Row("Sun & moon") {
+            String value() { return prefs.sunMoon ? "On" : "Off"; }
+            void step(int d) { prefs.sunMoon = !prefs.sunMoon; }
+        }));
+        addRow(list, scene(SceneView.SAND, new Row("Pour in at start") {
+            String value() { return prefs.pourIn ? "On" : "Off"; }
+            void step(int d) { prefs.pourIn = !prefs.pourIn; }
+        }));
+        addRow(list, scene(SceneView.SAND, new Row("Vacuum before midnight") {
+            String value() { return Prefs.VACUUM[prefs.vacuum]; }
+            void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
+        }));
+        addHeader(list, "Ocean");
+        addRow(list, scene(SceneView.OCEAN, new Row("Sea animals") {
+            String value() { return prefs.oceanAnimals ? "On" : "Off (less power)"; }
+            void step(int d) { prefs.oceanAnimals = !prefs.oceanAnimals; }
+        }));
+        addRow(list, scene(SceneView.OCEAN, new Row("Tide in at start") {
+            String value() { return prefs.tideIn ? "On" : "Off"; }
+            void step(int d) { prefs.tideIn = !prefs.tideIn; }
+        }));
+        addRow(list, scene(SceneView.OCEAN, new Row("Whirlpool before midnight") {
+            String value() { return Prefs.VACUUM[prefs.whirlpool]; }
+            void step(int d) { prefs.whirlpool = wrap(prefs.whirlpool + d, Prefs.VACUUM.length); }
+        }));
+        addHeader(list, "Night");
+        addRow(list, new Row("Night schedule") {
+            String value() { return prefs.nightEnabled ? "On" : "Off"; }
+            void step(int d) { prefs.nightEnabled = !prefs.nightEnabled; }
+        });
+        addRow(list, new Row("Night starts") {
+            String value() { return prefs.nightEnabled ? Prefs.formatMinutes(prefs.nightStart) : "—"; }
+            void step(int d) {
+                if (!prefs.nightEnabled) return;
+                prefs.nightStart = wrap(prefs.nightStart + 30 * d, 1440);
+                if (prefs.nightStart == prefs.nightEnd) prefs.nightStart = wrap(prefs.nightStart + 30 * d, 1440);
+            }
+        });
+        addRow(list, new Row("Night ends") {
+            String value() { return prefs.nightEnabled ? Prefs.formatMinutes(prefs.nightEnd) : "—"; }
+            void step(int d) {
+                if (!prefs.nightEnabled) return;
+                prefs.nightEnd = wrap(prefs.nightEnd + 30 * d, 1440);
+                if (prefs.nightEnd == prefs.nightStart) prefs.nightEnd = wrap(prefs.nightEnd + 30 * d, 1440);
+            }
+        });
+        addRow(list, new Row("At night show") {
+            String value() { return Prefs.NIGHT_STYLE[prefs.nightStyle]; }
+            void step(int d) { prefs.nightStyle = wrap(prefs.nightStyle + d, Prefs.NIGHT_STYLE.length); }
+        });
+        addRow(list, new Row("Lower backlight at night") {
+            String value() { return prefs.nightBacklight ? "On" : "Off"; }
+            void step(int d) { prefs.nightBacklight = !prefs.nightBacklight; }
+        });
+        addRow(list, new Row("Midnight reset during night") {
+            String value() { return prefs.nightFlip ? "On (dimmed)" : "Off"; }
+            void step(int d) { prefs.nightFlip = !prefs.nightFlip; }
+        });
+        addHeader(list, "TV & screensaver");
         addRow(list, new Row("Start screensaver after") {
             final int[] options = {1, 2, 5, 10, 15, 30, 60};
             String value() {
@@ -187,118 +326,6 @@ public class SettingsActivity extends Activity {
                 cycleSecure("attentive_timeout", options, d);
             }
         });
-        // Scenes: every combination of the scene bits (1 = sand, 2 = ocean), both first.
-        addRow(list, new Row("Scenes") {
-            final int[] options = {3, 1, 2};
-            String value() {
-                if (prefs.scenes == 3) return "Sand + Ocean (random)";
-                return SceneView.NAMES[prefs.scenes == 2 ? 1 : 0] + " only";
-            }
-            void step(int d) {
-                int k = 0;
-                for (int i = 0; i < options.length; i++) if (options[i] == prefs.scenes) k = i;
-                prefs.scenes = options[wrap(k + d, options.length)];
-                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.pick(prefs));
-            }
-        });
-        addRow(list, new Row("Preview shows") {
-            String value() { return SceneView.NAMES[previewScene]; }
-            void step(int d) { showPreview(wrap(previewScene + d, SceneView.NAMES.length)); }
-        });
-        addRow(list, new Row("Style") {
-            String value() { return Prefs.STYLES[prefs.style]; }
-            void step(int d) { prefs.style = wrap(prefs.style + d, Prefs.STYLES.length); }
-        });
-        addRow(list, new Row("Background") {
-            String value() { return prefs.style < 2 ? Prefs.BACKGROUND[prefs.background] : "— (black)"; }
-            void step(int d) { prefs.background = wrap(prefs.background + d, Prefs.BACKGROUND.length); }
-        });
-        addRow(list, new Row("Sand: grains fall at") {
-            String value() {
-                int v = prefs.dropPos;
-                if (v == Prefs.DROP_RANDOM) return "Random (new each day)";
-                return v + "%" + (v == 50 ? " (centre)" : v < 50 ? " (left)" : " (right)");
-            }
-            void step(int d) {
-                // 15 %, 20 %, ... 85 %, then Random.
-                int n = (GrainGrid.MAX_DROP - GrainGrid.MIN_DROP) / 5 + 1;
-                int i = prefs.dropPos == Prefs.DROP_RANDOM ? n : (prefs.dropPos - GrainGrid.MIN_DROP) / 5;
-                i = wrap(i + d, n + 1);
-                prefs.dropPos = i == n ? Prefs.DROP_RANDOM : GrainGrid.MIN_DROP + 5 * i;
-            }
-        });
-        addRow(list, new Row("Sand: stream sway") {
-            String value() { return Prefs.SWAY[prefs.sway]; }
-            void step(int d) { prefs.sway = wrap(prefs.sway + d, Prefs.SWAY.length); }
-        });
-        addRow(list, new Row("Colour") {
-            String value() { return Prefs.THEMES[prefs.theme]; }
-            void step(int d) { prefs.theme = wrap(prefs.theme + d, Prefs.THEMES.length); }
-        });
-        addRow(list, new Row("Brightness") {
-            String value() { return Prefs.BRIGHTNESS[prefs.brightness]; }
-            void step(int d) { prefs.brightness = wrap(prefs.brightness + d, Prefs.BRIGHTNESS.length); }
-        });
-        addRow(list, new Row("Clock") {
-            String value() { return prefs.use24h ? "24-hour" : "12-hour"; }
-            void step(int d) { prefs.use24h = !prefs.use24h; }
-        });
-        addRow(list, new Row("Animation") {
-            String value() { return Prefs.ANIM[prefs.anim]; }
-            void step(int d) {
-                int k = 0;
-                for (int i = 0; i < Prefs.ANIM_ORDER.length; i++) if (Prefs.ANIM_ORDER[i] == prefs.anim) k = i;
-                prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
-            }
-        });
-        addRow(list, new Row("Pour / tide in at start") {
-            String value() { return prefs.pourIn ? "On" : "Off"; }
-            void step(int d) { prefs.pourIn = !prefs.pourIn; }
-        });
-        addRow(list, new Row("Vacuum / whirlpool before midnight") {
-            String value() { return Prefs.VACUUM[prefs.vacuum]; }
-            void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
-        });
-        addRow(list, new Row("Night schedule") {
-            String value() { return prefs.nightEnabled ? "On" : "Off"; }
-            void step(int d) { prefs.nightEnabled = !prefs.nightEnabled; }
-        });
-        addRow(list, new Row("Night starts") {
-            String value() { return prefs.nightEnabled ? Prefs.formatMinutes(prefs.nightStart) : "—"; }
-            void step(int d) {
-                if (!prefs.nightEnabled) return;
-                prefs.nightStart = wrap(prefs.nightStart + 30 * d, 1440);
-                if (prefs.nightStart == prefs.nightEnd) prefs.nightStart = wrap(prefs.nightStart + 30 * d, 1440);
-            }
-        });
-        addRow(list, new Row("Night ends") {
-            String value() { return prefs.nightEnabled ? Prefs.formatMinutes(prefs.nightEnd) : "—"; }
-            void step(int d) {
-                if (!prefs.nightEnabled) return;
-                prefs.nightEnd = wrap(prefs.nightEnd + 30 * d, 1440);
-                if (prefs.nightEnd == prefs.nightStart) prefs.nightEnd = wrap(prefs.nightEnd + 30 * d, 1440);
-            }
-        });
-        addRow(list, new Row("At night show") {
-            String value() { return Prefs.NIGHT_STYLE[prefs.nightStyle]; }
-            void step(int d) { prefs.nightStyle = wrap(prefs.nightStyle + d, Prefs.NIGHT_STYLE.length); }
-        });
-        addRow(list, new Row("Lower backlight at night") {
-            String value() { return prefs.nightBacklight ? "On" : "Off"; }
-            void step(int d) { prefs.nightBacklight = !prefs.nightBacklight; }
-        });
-        addRow(list, new Row("Midnight reset during night") {
-            String value() { return prefs.nightFlip ? "On (dimmed)" : "Off"; }
-            void step(int d) { prefs.nightFlip = !prefs.nightFlip; }
-        });
-        addRow(list, new Row("Evening warmth") {
-            String value() {
-                if (prefs.city == 0) return "Off";
-                int set = Sun.times(prefs.city, java.util.Calendar.getInstance())[1];
-                return Sun.CITIES[prefs.city] + " · sunset " + Prefs.formatMinutes(set);
-            }
-            void step(int d) { prefs.city = wrap(prefs.city + d, Sun.CITIES.length); }
-        });
         addRow(list, new Row("Backlight while showing") {
             String value() {
                 if (!SystemTweaks.canWrite(SettingsActivity.this)) return "needs adb grant";
@@ -322,6 +349,7 @@ public class SettingsActivity extends Activity {
         };
         updates.repeatable = false;
         addRow(list, updates);
+        addHeader(list, "Try it");
         addAction(list, "Run clock now", new Runnable() {
             public void run() {
                 // Close settings, so leaving the clock goes back to the home screen.
@@ -329,7 +357,7 @@ public class SettingsActivity extends Activity {
                 finish();
             }
         });
-        addAction(list, "Preview end of day (at 3× speed)", new Runnable() {
+        addAction(list, "Preview end of day (preview's scene, 3× speed)", new Runnable() {
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, ClockActivity.class)
                         .putExtra(ClockActivity.EXTRA_DEMO_VACUUM, true)
@@ -389,6 +417,21 @@ public class SettingsActivity extends Activity {
         super.onDestroy();
     }
 
+    /** Marks a row as one scene's setting. */
+    private static Row scene(int scene, Row row) {
+        row.scene = scene;
+        return row;
+    }
+
+    /** A section title between groups of rows. */
+    private void addHeader(LinearLayout list, String title) {
+        TextView t = text(title.toUpperCase(java.util.Locale.US), 12, 0xFF9A7A5A);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setLetterSpacing(0.12f);
+        t.setPadding(dp(12), dp(rows.isEmpty() ? 4 : 18), 0, dp(4));
+        list.addView(t);
+    }
+
     private SceneView makePreview(int scene) {
         SceneView v = SceneView.create(this, scene);
         v.setPreviewMode(true);
@@ -408,6 +451,7 @@ public class SettingsActivity extends Activity {
         preview = makePreview(scene);
         preview.setPrefs(prefs);
         preview.start();
+        for (Row r : rows) r.valueView.setText(r.value()); // "Preview shows"
     }
 
     private void addRow(LinearLayout list, final Row row) {
@@ -420,6 +464,11 @@ public class SettingsActivity extends Activity {
         item.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) { change(row, 1); }
         });
+        if (row.scene >= 0) {
+            item.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                public void onFocusChange(View v, boolean has) { if (has) showPreview(row.scene); }
+            });
+        }
         item.setOnKeyListener(new View.OnKeyListener() {
             public boolean onKey(View v, int keyCode, KeyEvent e) {
                 if (e.getAction() != KeyEvent.ACTION_DOWN) return false;

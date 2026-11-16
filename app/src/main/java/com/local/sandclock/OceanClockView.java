@@ -142,7 +142,7 @@ public class OceanClockView extends SceneView {
         if (demoRequested) {
             demoRequested = false;
             scene.startDemo(t, c);
-        } else if (prefs.pourIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && !previewMode) {
+        } else if (prefs.tideIn && !isNight() && prefs.anim != Prefs.ANIM_OFF && !previewMode) {
             scene.startTide(t);
         }
     }

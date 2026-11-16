@@ -31,6 +31,16 @@ final class Prefs {
     static final String[] VACUUM = {"Off (empties at midnight)", "1 min", "2 min", "5 min", "10 min"};
     static final int[] VACUUM_MIN = {0, 1, 2, 5, 10};
     int vacuum = 3;
+    /** Sand: each hour's sand in its own shade, so the pile shows the day in layers. */
+    boolean sandLayers = true;
+    /** Sand: the sun crosses the sky by day, the moon (real phase) by night. */
+    boolean sunMoon = true;
+    /** Ocean: the tide rolls in when the screensaver starts. */
+    boolean tideIn = true;
+    /** Ocean: minutes of whirlpool before midnight (index into VACUUM; 0 = drains at midnight). */
+    int whirlpool = 3;
+    /** Ocean: fish, turtles, crabs... (off: only the whale moves). */
+    boolean oceanAnimals = true;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black", "Dark", "Glowing"};
@@ -85,6 +95,11 @@ final class Prefs {
         p.background = clamp(s.getInt("background", 0), BACKGROUND.length);
         p.pourIn = s.getBoolean("pourIn", true);
         p.vacuum = clamp(s.getInt("vacuum", 3), VACUUM.length);
+        p.tideIn = s.getBoolean("tideIn", p.pourIn);
+        p.whirlpool = clamp(s.getInt("whirlpool", p.vacuum), VACUUM.length);
+        p.oceanAnimals = s.getBoolean("oceanAnimals", true);
+        p.sandLayers = s.getBoolean("sandLayers", true);
+        p.sunMoon = s.getBoolean("sunMoon", true);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
         p.nightEnabled = s.getBoolean("nightEnabled", true);
         p.nightStart = s.getInt("nightStart", 23 * 60);
@@ -110,6 +125,11 @@ final class Prefs {
                 .putInt("background", background)
                 .putBoolean("pourIn", pourIn)
                 .putInt("vacuum", vacuum)
+                .putBoolean("tideIn", tideIn)
+                .putInt("whirlpool", whirlpool)
+                .putBoolean("oceanAnimals", oceanAnimals)
+                .putBoolean("sandLayers", sandLayers)
+                .putBoolean("sunMoon", sunMoon)
                 .putBoolean("use24h", use24h)
                 .putBoolean("nightEnabled", nightEnabled)
                 .putInt("nightStart", nightStart)
@@ -131,6 +151,8 @@ final class Prefs {
     }
 
     int sandColor() { return scaled(THEME_COLORS[theme][0], 1f); }
+    /** The theme's sand colour before brightness and warmth. */
+    int sandRgb() { return THEME_COLORS[theme][0] & 0xFFFFFF; }
     int glassColor() { return scaled(THEME_COLORS[theme][1], 1f); }
     int textColor(float extra) { return scaled(THEME_COLORS[theme][2], extra); }
     int sandColor(float extra) { return scaled(THEME_COLORS[theme][0], extra); }

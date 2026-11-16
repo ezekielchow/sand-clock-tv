@@ -342,7 +342,7 @@ final class OceanScene {
     /** How full the sea is now, 0..1, and whether the whirlpool is turning. */
     private float levelFrac(Calendar c, long t, boolean vacuumAllowed) {
         long ms = msOfDay(c);
-        int vm = Prefs.VACUUM_MIN[prefs.vacuum];
+        int vm = Prefs.VACUUM_MIN[prefs.whirlpool];
         long vacFrom = DAY_MS - vm * 60_000L;
         whirl = false;
         float frac = minuteOfDay(c) / 1440f;
@@ -556,6 +556,7 @@ final class OceanScene {
     }
 
     private void maybeSpawn(long t) {
+        if (!prefs.oceanAnimals) return;
         float df = depthFrac();
         if (swimmer == null && t >= nextSwimAt) {
             List<Integer> kinds = new ArrayList<>();
