@@ -48,6 +48,10 @@ final class AntScene {
     private final boolean[] dug;
     private int shown;                    // cells dug so far (as shown)
     private final int[] shaft;            // main shaft path (for the carrying ant), cell indexes
+    private final int[] oHead;            // per dug cell: the digger's head when it dug it
+    private final byte[] oDir;            // ... and the way it faced (0 right, 1 left, 2 down, 3 up)
+    private int digHead, digDir;          // set while planning a step
+    private long lastDigAt = -1;          // uptime of the last cell dug (the digger holds a crumb)
     private int nShaft;
     private final byte[] room;            // extras' chambers: 1 queen, 2 eggs, 3 food (0 none)
     private final int[][] rooms = new int[3][];   // {cx, cy, rx, ry}
@@ -131,6 +135,8 @@ final class AntScene {
         rooms[1] = new int[]{Math.round(cols * 0.89f), deep - 5 * unit, 12 * unit, 5 * unit}; // eggs
         rooms[2] = new int[]{Math.round(cols * 0.5f), deep - 3 * unit, 14 * unit, 3 * unit};  // food
         order = new int[GRAINS_PER_DAY + 4096];
+        oHead = new int[order.length];
+        oDir = new byte[order.length];
         shaft = new int[rows * 4];
         planTunnels(r);
     }
@@ -155,6 +161,8 @@ final class AntScene {
         int i = y * cols + x;
         if (dug[i]) return;
         dug[i] = true; // marks "planned"; reset below so the shown state starts empty
+        oHead[nOrder] = digHead;
+        oDir[nOrder] = (byte) digDir;
         order[nOrder++] = i;
     }
 
@@ -218,8 +226,14 @@ final class AntScene {
             } else {
                 h[0] = nx;
                 h[1] = ny;
+                digHead = Math.round(ny) * cols + Math.round(nx);
+                double ca = Math.cos(h[2]), sa = Math.sin(h[2]);
+                digDir = Math.abs(ca) >= Math.abs(sa) ? (ca >= 0 ? 0 : 1) : (sa >= 0 ? 2 : 3);
                 carve(nx, ny);
-                if (first && nShaft < shaft.length) shaft[nShaft++] = Math.round(ny) * cols + Math.round(nx);
+                // The shaft path, one entry per cell (no repeats), so the carrier always has a
+                // direction to face.
+                int sc = Math.round(ny) * cols + Math.round(nx);
+                if (first && nShaft < shaft.length && (nShaft == 0 || shaft[nShaft - 1] != sc)) shaft[nShaft++] = sc;
             }
             float dx = h[3] - h[0], dy = h[4] - h[1];
             if (dx * dx + dy * dy < 9 || h[5] > 40) {
@@ -580,6 +594,7 @@ final class AntScene {
         int want = target(c, t, rainAllowed);
         int before = shown;
         int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
+        if (shown < want && shown < nOrder && want - shown <= 20) lastDigAt = t;
         while (shown < want && shown < nOrder) {
             int i = order[shown++];
             dug[i] = true;
@@ -691,38 +706,62 @@ final class AntScene {
         cur[nCur++] = x0; cur[nCur++] = y0; cur[nCur++] = x1 - x0; cur[nCur++] = y1 - y0;
     }
 
+    /** The surface: the first row with a grain (or the ground) in column x. */
+    private int surfaceAt(int x) {
+        return hill.freeDepth(Math.max(0, Math.min(cols - 1, x)));
+    }
+
     private void render(Calendar c, long t, boolean animate) {
         long ms = msOfDay(c);
-        int aw = ANT_A.w * unit, ah = ANT_A.h * unit;
+        int aw = WALK_A.w, ah = WALK_A.h;
 
-        // The seconds ant walks the surface (over the hill) once a minute, turning at each end.
+        // The seconds ant patrols a trail by the nest, one way each minute, turning at the ends.
+        // Feet on the soil under its middle, so it walks up and down the hill.
         float s = (ms % 60_000) / 60_000f;
         if (!animate) s = (int) (s * 60) / 60f;
         boolean right = (ms / 60_000) % 2 == 0;
-        int sx = Math.round(right ? 2 + s * (cols - aw - 4) : cols - aw - 2 - s * (cols - aw - 4));
-        int surf = ground;
-        for (int x = sx; x < sx + aw; x++) surf = Math.min(surf, hill.freeDepth(Math.max(0, Math.min(cols - 1, x))));
-        int sy = surf - ah;
-        addCur(sx, sy - unit, aw, ah + unit);
+        int half = cols / 6;
+        int t0 = Math.max(2, Math.min(cols - aw - 2 - 2 * half, entrance - half));
+        float along = (right ? s : 1 - s) * 2 * half;
+        int sx = t0 + Math.round(along);
+        int sy = surfaceAt(sx + aw / 2) - ah;
+        int sFrame = Math.round(along) % 2;               // legs move as it steps a cell
+        addCur(sx, sy - 1, aw, ah + 1);
 
-        // The digger at the end of today's tunnel; the carrier on the main shaft.
-        int dx = -1, dy = -1, cx = -1, cy = -1;
+        // The digger, its head at today's tunnel face, facing the way it digs.
+        int dx = -9999, dy = 0, dDir = 0;
         if (shown > 0 && shown < nOrder) {
-            int i = order[shown - 1];
-            dx = i % cols - aw / 2;
-            dy = i / cols - ah / 2;
-            addCur(dx, dy, aw, ah);
+            int head = oHead[shown - 1];
+            dDir = oDir[shown - 1];
+            int hx = head % cols, hy = head / cols;
+            Sprite sp = dDir < 2 ? WALK_A : CLIMB_A;
+            if (dDir == 0) { dx = hx - sp.w + 1; dy = hy - 1; }
+            else if (dDir == 1) { dx = hx; dy = hy - 1; }
+            else if (dDir == 2) { dx = hx - 1; dy = hy - sp.h + 1; }
+            else { dx = hx - 1; dy = hy; }
+            addCur(dx - 1, dy - 1, sp.w + 2, sp.h + 2);
         }
-        // Only along the part of the shaft dug so far (the plan interleaves several diggers).
+        // The carrier: down the main shaft and back up with a crumb, 90 s round trip, only on
+        // the part dug so far.
         int open = 0;
         while (open < nShaft && dug[shaft[open]]) open++;
-        if (animate && open > 4) {
-            float q = (t % 40_000) / 20_000f;           // down and back up in 40 s
-            float along = q <= 1f ? q : 2f - q;
-            int i = shaft[Math.min(open - 1, Math.round(along * (open - 1)))];
-            cx = i % cols - aw / 2;
-            cy = i / cols - ah / 2;
-            addCur(cx, cy - unit, aw, ah + unit);
+        int cx = -9999, cy = 0, cDir = 0;
+        boolean cUp = false;
+        int cFrame = 0;
+        if (animate && open > 6) {
+            float q = (t % 90_000) / 45_000f;
+            cUp = q > 1f;
+            float a = cUp ? 2f - q : q;
+            int k = Math.min(open - 2, Math.round(a * (open - 2)));
+            int i0 = shaft[k], i1 = shaft[k + 1];
+            int ddx = i1 % cols - i0 % cols, ddy = i1 / cols - i0 / cols;
+            if (cUp) { ddx = -ddx; ddy = -ddy; }
+            cDir = Math.abs(ddx) >= Math.abs(ddy) ? (ddx >= 0 ? 0 : 1) : (ddy >= 0 ? 2 : 3);
+            Sprite sp = cDir < 2 ? WALK_A : CLIMB_A;
+            cx = i0 % cols - sp.w / 2;
+            cy = i0 / cols - sp.h / 2;
+            cFrame = k % 2;
+            addCur(cx - 1, cy - 1, sp.w + 2, sp.h + 2);
         }
         if (nDrops > 0) addCur(0, 0, cols, ground);
 
@@ -732,10 +771,13 @@ final class AntScene {
             restore(cur, nCur);
         }
 
-        int legs = animate ? (int) ((t / 160) % 2) : 0;
-        drawAnt(sx, sy, !right, legs, true, false);
-        if (dx >= 0 || dy >= 0) drawAnt(dx, dy, false, (int) ((t / 300) % 2), false, true);
-        if (cx >= 0) drawAnt(cx, cy, (t % 40_000) >= 20_000, legs, true, true);
+        drawAnt(sx, sy, right ? 0 : 1, sFrame, true, false);
+        if (dx > -9999) {
+            // Jaws working at the face; a crumb held for a moment after each bite.
+            int f = animate ? (int) ((t / 500) % 2) : 0;
+            drawAnt(dx, dy, dDir, f, lastDigAt >= 0 && t - lastDigAt < 1500, false);
+        }
+        if (cx > -9999) drawAnt(cx, cy, cDir, cFrame, cUp, false);
         for (int k = 0; k < nDrops; k++) {
             int x = Math.round(dX[k]), y = Math.round(dY[k]);
             for (int l = 0; l < 2 * unit; l++) {
@@ -762,25 +804,32 @@ final class AntScene {
         }
     }
 
-    /** An ant (optionally carrying a crumb), drawn only over air (sky, tunnels) when inside. */
-    private void drawAnt(int x, int y, boolean flip, int frame, boolean crumb, boolean airOnly) {
-        Sprite s = frame == 0 ? ANT_A : ANT_B;
-        for (int yy = 0; yy < s.h * unit; yy++) for (int xx = 0; xx < s.w * unit; xx++) {
-            int pi = s.at(xx / unit, yy / unit, flip);
+    /**
+     * A small ant, one cell per pixel of its art, facing dir (0 right, 1 left, 2 down, 3 up),
+     * with a crumb in its jaws if asked. Underground it shows only over dug cells.
+     */
+    private void drawAnt(int x, int y, int dir, int frame, boolean crumb, boolean airOnly) {
+        boolean side = dir < 2;
+        Sprite s = side ? (frame == 0 ? WALK_A : WALK_B) : (frame == 0 ? CLIMB_A : CLIMB_B);
+        boolean fx = dir == 1, fy = dir == 3;
+        for (int yy = 0; yy < s.h; yy++) for (int xx = 0; xx < s.w; xx++) {
+            int pi = s.at(fx ? s.w - 1 - xx : xx, fy ? s.h - 1 - yy : yy, false);
             if (pi < 0) continue;
-            int X = x + xx, Y = y + yy;
-            if (X < 0 || Y < 0 || X >= cols || Y >= rows) continue;
-            int i = Y * cols + X;
-            if (airOnly && Y >= ground && !dug[i] && !hollow[i]) continue;
-            px[i] = pal[pi];
+            plotAnt(x + xx, y + yy, pal[pi], airOnly);
         }
         if (crumb) {
-            int bx = flip ? x + unit : x + (s.w - 2) * unit;
-            for (int k = 0; k < unit; k++) for (int l = 0; l < unit; l++) {
-                int X = bx + k, Y = y - unit + l;
-                if (X >= 0 && Y >= 0 && X < cols && Y < rows) px[Y * cols + X] = pal[CRUMB];
-            }
+            // Just ahead of the head.
+            int bx = dir == 0 ? x + s.w : dir == 1 ? x - 1 : x + s.w / 2;
+            int by = dir == 2 ? y + s.h : dir == 3 ? y - 1 : y + 1;
+            plotAnt(bx, by, pal[CRUMB], airOnly);
         }
+    }
+
+    private void plotAnt(int X, int Y, int col, boolean airOnly) {
+        if (X < 0 || Y < 0 || X >= cols || Y >= rows) return;
+        int i = Y * cols + X;
+        if (airOnly && Y >= ground && !dug[i] && !hollow[i]) return;
+        px[i] = col;
     }
 
     /** True while something needs smooth frames (dig-in, rain, sliding grains). */
@@ -805,14 +854,25 @@ final class AntScene {
             "######.####.",
             ".####.#.#.#.",
             "..#..#.#...."};
-    static final Sprite ANT_A = new Sprite(ANT,
-            ".......#",
-            ".##.##.#",
-            "########",
-            "#.#..#.#");
-    static final Sprite ANT_B = new Sprite(ANT,
-            ".......#",
-            ".##.##.#",
-            "########",
-            ".#.##.#.");
+    /** Ants, one cell per pixel: walking (head on the right) and climbing (head down). */
+    static final Sprite WALK_A = new Sprite(ANT,
+            "....#",
+            "##.##",
+            ".#.#.");
+    static final Sprite WALK_B = new Sprite(ANT,
+            "....#",
+            "##.##",
+            "#.#.#");
+    static final Sprite CLIMB_A = new Sprite(ANT,
+            ".#.",
+            "#.#",
+            ".#.",
+            "#.#",
+            ".#.");
+    static final Sprite CLIMB_B = new Sprite(ANT,
+            "#.#",
+            ".#.",
+            "#.#",
+            ".#.",
+            ".#.");
 }

@@ -214,8 +214,9 @@ public class GardenClockView extends SceneView {
         } else if (scene.busy()) {
             delay = frameMs(); // petals, leaves, the bee, grow-in, autumn
         } else if (scene.moving()) {
-            // The ladybug, fireflies and the bird move under a cell per 1/8 s: 8 fps is enough.
-            delay = Math.max(frameMs(), 125);
+            // The bird needs 8 fps while it crosses; the ladybug (~2.5 cells a second) and the
+            // slow fireflies are fine at 4 fps.
+            delay = Math.max(frameMs(), scene.fastMoving() ? 125 : 250);
         } else {
             delay = 1000 - now % 1000 + 5; // nothing moves: check the clock once a second
         }

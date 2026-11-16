@@ -219,8 +219,8 @@ public class AntClockView extends SceneView {
         } else if (scene.busy()) {
             delay = frameMs();
         } else {
-            // Only the ants move, about a cell per 1/8 s: 8 fps is enough.
-            delay = Math.max(frameMs(), 125);
+            // Only the ants move, under three cells a second: 4 fps is enough.
+            delay = Math.max(frameMs(), 250);
         }
         handler.postDelayed(tick, delay);
     }

@@ -587,7 +587,12 @@ final class OceanScene {
         float x0, speed;   // cells per second
         long born;
         int dir, y, school;
-        boolean wetOnly, bob;
+        boolean wetOnly;
+        int bobAmp, bobMs = 1, strokeMs = 700; // rise and fall (cells × unit, period), fin beat
+        /** Up and down as it swims, so it doesn't glide along a ruler. */
+        int bob(long t, int unit) {
+            return (int) Math.round(Math.sin((t - born) * 2 * Math.PI / bobMs) * bobAmp * unit / 2.0);
+        }
         float x(long t) { return x0 + dir * speed * (t - born) / 1000f; }
     }
 
@@ -609,11 +614,18 @@ final class OceanScene {
                 Mob m = new Mob();
                 m.wetOnly = true;
                 switch (kind) {
-                    case 0: m.frames = new Sprite[]{FISH}; m.speed = 9; m.school = 5; break;
-                    case 1: m.frames = new Sprite[]{TURTLE}; m.speed = 4; break;
-                    case 2: m.frames = new Sprite[]{RAY}; m.speed = 5; break;
-                    case 3: m.frames = new Sprite[]{JELLY, JELLY2}; m.speed = 1.3f; m.bob = true; break;
-                    default: m.frames = new Sprite[]{ANGLER}; m.speed = 2.5f; break;
+                    // Speeds in body-lengths, roughly: fish dart, turtles and rays cruise,
+                    // jellyfish drift, the anglerfish creeps along the bottom.
+                    case 0: m.frames = new Sprite[]{FISH, FISH2}; m.speed = 7; m.school = 5;
+                        m.bobAmp = 2; m.bobMs = 1900; m.strokeMs = 260; break;
+                    case 1: m.frames = new Sprite[]{TURTLE, TURTLE2}; m.speed = 3;
+                        m.bobAmp = 2; m.bobMs = 4200; m.strokeMs = 900; break;
+                    case 2: m.frames = new Sprite[]{RAY, RAY2}; m.speed = 4;
+                        m.bobAmp = 3; m.bobMs = 5200; m.strokeMs = 1100; break;
+                    case 3: m.frames = new Sprite[]{JELLY, JELLY2}; m.speed = 1.3f;
+                        m.bobAmp = 4; m.bobMs = 8800; m.strokeMs = 700; break;
+                    default: m.frames = new Sprite[]{ANGLER, ANGLER2}; m.speed = 2;
+                        m.bobAmp = 1; m.bobMs = 3600; m.strokeMs = 800; break;
                 }
                 m.speed *= unit;
                 int h = m.frames[0].h * unit;
@@ -803,9 +815,9 @@ final class OceanScene {
         if (swimmer != null) {
             Mob m = swimmer;
             int x = Math.round(m.x(t));
-            int y = m.y + (m.bob ? (int) Math.round(Math.sin(t / 1400.0) * 4 * unit) : 0);
+            int y = m.y + m.bob(t, unit);
             int w = m.frames[0].w * unit, h = m.frames[0].h * unit;
-            if (m.school > 0) addCur(x - (m.dir > 0 ? 26 * unit : 0), y - 8 * unit, w + 26 * unit, h + 16 * unit);
+            if (m.school > 0) addCur(x - (m.dir > 0 ? 26 * unit : 0), y - 10 * unit, w + 28 * unit, h + 20 * unit);
             else addCur(x, y, w, h);
         }
         if (whaleShown) addCur(whaleX, whaleY, ww, wh);
@@ -859,11 +871,17 @@ final class OceanScene {
         if (swimmer != null) {
             Mob m = swimmer;
             int x = Math.round(m.x(t));
-            int y = m.y + (m.bob ? (int) Math.round(Math.sin(t / 1400.0) * 4 * unit) : 0);
-            Sprite sp = m.frames[(int) ((t / 700) % m.frames.length)];
+            int y = m.y + m.bob(t, unit);
+            Sprite sp = m.frames[(int) (((t - m.born) / m.strokeMs) % m.frames.length)];
             if (m.school > 0) {
                 int[][] off = {{0, 0}, {-11, -6}, {-9, 6}, {-22, 1}, {-19, -8}};
-                for (int[] o : off) drawSprite(sp, x + o[0] * unit * m.dir, y + o[1] * unit, m.dir < 0, true, true);
+                // Each fish of the school drifts a little on its own and beats out of step.
+                for (int k = 0; k < off.length; k++) {
+                    int[] o = off[k];
+                    int wob = (int) Math.round(Math.sin(t / 650.0 + k * 1.7) * unit);
+                    Sprite f = m.frames[(int) (((t - m.born) / m.strokeMs + k) % m.frames.length)];
+                    drawSprite(f, x + o[0] * unit * m.dir, y + o[1] * unit + wob, m.dir < 0, true, true);
+                }
             } else {
                 drawSprite(sp, x, y, m.dir < 0, true, true);
             }
@@ -1111,6 +1129,31 @@ final class OceanScene {
             "T..YYY..",
             "TTYYYYEY",
             "T..YYY..");
+    static final Sprite FISH2 = new Sprite("TYE", new int[]{F_TAIL, F_BODY, DARK},
+            ".T.YYY..",
+            "TTYYYYEY",
+            ".T.YYY..");
+    static final Sprite TURTLE2 = new Sprite("SsHEk", new int[]{T_SHELL, T_LIGHT, T_SKIN, DARK, T_SKIN},
+            "....SSSSS.......",
+            "..SSsSSsSSS.....",
+            "kSSsSSSSsSSS.HH.",
+            "SSSSSSSSSSSSSHEH",
+            ".kSSSSSSSSSSkHHH",
+            "...........k....");
+    static final Sprite RAY2 = new Sprite("Rr", new int[]{R_BODY, R_UNDER},
+            ".........RRR......",
+            ".......RRRRRRRR...",
+            ".....RRRRRRRRRRRR.",
+            "RRRRRRrrrrrrrrrrRR");
+    static final Sprite ANGLER2 = new Sprite("AaLEt", new int[]{A_BODY, A_STALK, A_LURE, A_EYE, A_TOOTH},
+            ".......aaL.",
+            ".......a...",
+            "..AAAAAA...",
+            "AAAAAAAAAA.",
+            "AAAAAAAEAAA",
+            ".AAAAAAAtAt",
+            "AAAAAAAtAt.",
+            "..AAAAAA...");
     static final Sprite CRAB = new Sprite("CE", new int[]{C_BODY, DARK},
             "C.......C",
             "CC.E.E.CC",

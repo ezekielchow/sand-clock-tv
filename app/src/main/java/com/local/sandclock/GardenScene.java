@@ -1142,6 +1142,9 @@ final class GardenScene {
         return prefs.gardenCritters && (nPath > 1 || afterSunset || birdStart >= 0);
     }
 
+    /** The bird crosses fast (about 12 cells a second): it needs 8 fps; the rest is slow. */
+    boolean fastMoving() { return prefs.gardenCritters && birdStart >= 0; }
+
     private void drawSprite(Sprite s, int x, int y, boolean flip, boolean behindText) {
         for (int sy = 0; sy < s.h * unit; sy++) {
             int yy = y + sy;
