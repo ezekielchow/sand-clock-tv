@@ -38,7 +38,14 @@ final class Updater {
         c.setRequestProperty("Accept", "application/vnd.github+json");
         int code = c.getResponseCode();
         if (code == 404) throw new IOException("no releases yet");
-        if (code != 200) throw new IOException("GitHub replied " + code);
+        if (code != 200) {
+            // The API allows 60 lookups an hour per internet address without a login, shared by
+            // every device on the network (403/429 when used up). The release pages on
+            // github.com don't count against it, so read those instead.
+            c.disconnect();
+            checkWeb(code);
+            return latestCode > BuildConfig.VERSION_CODE;
+        }
         try {
             JSONObject release = new JSONObject(readAll(c.getInputStream()));
             latestName = release.optString("tag_name", "?").replaceFirst("^v", "");
@@ -58,6 +65,40 @@ final class Updater {
         }
         if (apkUrl == null) throw new IOException("release has no app file");
         return latestCode > BuildConfig.VERSION_CODE;
+    }
+
+    /**
+     * The same lookup through github.com's own pages: /releases/latest redirects to the newest
+     * tag, and that release's file list names the app file (sand-clock-<version code>.apk).
+     */
+    private void checkWeb(int apiCode) throws IOException {
+        String base = "https://github.com/" + BuildConfig.UPDATE_REPO + "/releases";
+        HttpURLConnection c = open(base + "/latest");
+        c.setInstanceFollowRedirects(false);
+        int code = c.getResponseCode();
+        String location = c.getHeaderField("Location");
+        c.disconnect();
+        int at = location == null ? -1 : location.indexOf("/releases/tag/");
+        if (code / 100 != 3 || at < 0) {
+            throw new IOException(apiCode == 403 || apiCode == 429
+                    ? "GitHub is limiting requests from this network; try again in an hour"
+                    : "GitHub replied " + apiCode);
+        }
+        String tag = location.substring(at + "/releases/tag/".length());
+        c = open(base + "/expanded_assets/" + tag);
+        try {
+            if (c.getResponseCode() != 200) throw new IOException("GitHub replied " + c.getResponseCode());
+            Matcher m = APK.matcher(readAll(c.getInputStream()));
+            while (m.find()) {
+                int v = Integer.parseInt(m.group(1));
+                if (v > latestCode) latestCode = v;
+            }
+        } finally {
+            c.disconnect();
+        }
+        if (latestCode < 0) throw new IOException("release has no app file");
+        latestName = tag.replaceFirst("^v", "");
+        apkUrl = base + "/download/" + tag + "/sand-clock-" + latestCode + ".apk";
     }
 
     /** Downloads the update and hands it to Android's installer, which asks to confirm. */
