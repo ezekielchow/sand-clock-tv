@@ -38,10 +38,23 @@ final class ClockText {
         return new String[]{time, ampm, date};
     }
 
-    /** Changes whenever the text on screen would change. */
+    private static long keyMinute = Long.MIN_VALUE;
+    private static boolean keyUse24h;
+    private static String keyText;
+
+    /**
+     * Changes whenever the text on screen would change. Called every frame, so the text is
+     * only formatted again when the minute (or the 12/24-hour choice) changes.
+     */
     static String key(Prefs prefs, Calendar c) {
-        String[] s = strings(prefs, c);
-        return s[0] + s[1] + s[2];
+        long minute = (c.getTimeInMillis() + c.get(Calendar.ZONE_OFFSET) + c.get(Calendar.DST_OFFSET)) / 60_000L;
+        if (minute != keyMinute || prefs.use24h != keyUse24h || keyText == null) {
+            String[] s = strings(prefs, c);
+            keyText = s[0] + s[1] + s[2];
+            keyMinute = minute;
+            keyUse24h = prefs.use24h;
+        }
+        return keyText;
     }
 
     /** The slots for the text at time c (cells == null when cells is false: ids only). */

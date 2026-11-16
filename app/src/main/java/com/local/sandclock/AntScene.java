@@ -193,8 +193,8 @@ final class AntScene {
     private void planTunnels(Random r) {
         List<float[]> heads = new ArrayList<>(); // {x, y, angle, goalX, goalY, stuck}
         float side = entrance < cols / 2 ? cols * 0.07f : cols * 0.93f;
-        heads.add(new float[]{entrance, ground, (float) (Math.PI / 2), side, rows - bedRows - 10 * unit, 0});
-        boolean first = true;
+        float[] shaftHead = new float[]{entrance, ground, (float) (Math.PI / 2), side, rows - bedRows - 10 * unit, 0};
+        heads.add(shaftHead);
         int guard = 0;
         while (nOrder < GRAINS_PER_DAY && guard++ < 600_000) {
             if (heads.isEmpty() || (heads.size() < 2 && r.nextInt(400) == 0)) {
@@ -206,6 +206,7 @@ final class AntScene {
             }
             int hi = guard % heads.size();
             float[] h = heads.get(hi);
+            boolean first = h == shaftHead;
             // Steer toward the goal, with some wander.
             float want = (float) Math.atan2(h[4] - h[1], h[3] - h[0]);
             float diff = (float) Math.atan2(Math.sin(want - h[2]), Math.cos(want - h[2]));
@@ -224,7 +225,6 @@ final class AntScene {
             if (dx * dx + dy * dy < 9 || h[5] > 40) {
                 chamber(h[0], h[1], (3 + r.nextInt(4)) * unit, (1 + r.nextInt(2)) * unit + 1);
                 heads.remove(hi);
-                first = false;
             }
         }
         java.util.Arrays.fill(dug, false); // nothing is dug yet; `shown` reveals the plan
@@ -599,8 +599,9 @@ final class AntScene {
             }
         }
         if (x1 >= 0) addCur(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-        // A few grains at a time as the day goes: count them (only live digging, as the screensaver).
-        if (recording && shown > before && shown - before <= 3 && digInStart < 0 && !raining && !gap) {
+        // Grains dug as the day goes: count them (only live digging, as the screensaver). At
+        // night the farm updates once a minute (10 grains); bigger jumps are catch-up or dig-in.
+        if (recording && shown > before && shown - before <= 20 && digInStart < 0 && !raining && !gap) {
             for (int k = before; k < shown; k++) stats.addGrain();
         }
         while (placed < want) {
@@ -712,10 +713,13 @@ final class AntScene {
             dy = i / cols - ah / 2;
             addCur(dx, dy, aw, ah);
         }
-        if (animate && nShaft > 4 && shown > nShaft) {
+        // Only along the part of the shaft dug so far (the plan interleaves several diggers).
+        int open = 0;
+        while (open < nShaft && dug[shaft[open]]) open++;
+        if (animate && open > 4) {
             float q = (t % 40_000) / 20_000f;           // down and back up in 40 s
             float along = q <= 1f ? q : 2f - q;
-            int i = shaft[Math.min(nShaft - 1, Math.round(along * (nShaft - 1)))];
+            int i = shaft[Math.min(open - 1, Math.round(along * (open - 1)))];
             cx = i % cols - aw / 2;
             cy = i / cols - ah / 2;
             addCur(cx, cy - unit, aw, ah + unit);

@@ -39,6 +39,7 @@ public class GardenClockView extends SceneView {
     private GardenScene scene;
     private Bitmap picture, textLayer;
     private float cell;
+    private long midnightAt = -1; // uptime the day changed, while the old day finishes
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -168,9 +169,12 @@ public class GardenClockView extends SceneView {
             build(c, w, h, t);
         } else if (dayKey(c) != scene.day) {
             // Midnight. After autumn the tree is already bare; otherwise drop its leaves now.
+            // Either way the new day starts once the last leaves have landed (at most 15 s).
+            if (midnightAt < 0) midnightAt = t;
             if (reset && !scene.bare() && !scene.dropped(t) && prefs.anim != Prefs.ANIM_OFF) {
                 scene.startDrop(t);
-            } else {
+            } else if (!scene.airborne() || t - midnightAt > 15_000) {
+                midnightAt = -1;
                 build(c, w, h, t);
             }
         }
@@ -253,7 +257,7 @@ public class GardenClockView extends SceneView {
             canvas.drawRect(l, tp, l + cell, tp + cell, dotPaint);
         }
         int[] box = scene.treeBox;
-        if (box[2] <= 0 || box[3] <= 0) return;
+        if (!prefs.gardenCritters || box[2] <= 0 || box[3] <= 0) return;
         dotPaint.setColor(prefs.nightBacklight ? 0xFF34381A : 0xFF464C20);
         for (int k = 0; k < FIREFLIES; k++) {
             int x = box[0] + r.nextInt(box[2]), y = box[1] + box[3] / 4 + r.nextInt(Math.max(1, box[3] * 3 / 4));

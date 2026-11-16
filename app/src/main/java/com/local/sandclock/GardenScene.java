@@ -31,7 +31,8 @@ final class GardenScene {
     /** Midnight with autumn off: the leaves fall in this long. */
     static final int DROP_MS = 7000;
     static final long DEMO_MS = 100_000;
-    private static final int BEE_MS = 5200;
+    /** The hourly bee: flies between up to BEE_STOPS flowers, hovering at each. */
+    private static final int BEE_FLY_MS = 1600, BEE_HOVER_MS = 1900, BEE_STOPS = 4;
     private static final int BIRD_MS = 40_000;
     /** Growth is kept in 1/10000 of a day; the tree's pixels store when they appear. */
     private static final int G_FULL = 10_000;
@@ -106,7 +107,9 @@ final class GardenScene {
     private float[] pathX = new float[0], pathY = new float[0];
     private int nPath;
     private long beeStart = -1;
-    private int beeFromX, beeToX, beeTargetX, beeTargetY;
+    private final int[] beeWX = new int[BEE_STOPS + 2], beeWY = new int[BEE_STOPS + 2];
+    private int beeN;        // waypoints: off-screen, the flowers, off-screen
+    private long beeDur;     // ms for the whole tour
     private int bugX, bugY;
     private boolean bugRight;
 
@@ -513,18 +516,26 @@ final class GardenScene {
     void startGrowIn(long t) { growStart = t; }
 
     /** Midnight without autumn: the leaves fall now, quickly. */
+    private float dropFrom;
+
     void startDrop(long t) {
         if (dropStart < 0) {
             dropStart = t;
             frozenG = Math.max(g, 0);
+            // Carry on from wherever autumn had got to (e.g. the last once-a-minute night
+            // step was at 23:59), so leaves already fallen don't come back green.
+            dropFrom = aStep / (float) A_STEPS;
         }
     }
 
     boolean dropped(long t) { return dropStart >= 0 && t - dropStart >= DROP_MS; }
 
+    /** True while falling leaves or petals are still in the air. */
+    boolean airborne() { return nP > 0; }
+
     /** True when there is nothing left to fall (autumn done, or no leaves yet). */
     boolean bare() {
-        if (aStep >= A_STEPS) return true;
+        if (aStep * 100 >= 97 * A_STEPS) return true; // every leaf has fallen by 97 % of autumn
         for (int ct : clusterT) if (ct <= g) return false;
         return true;
     }
@@ -554,7 +565,7 @@ final class GardenScene {
             autumn = a < 1f;
         } else if (dropStart >= 0) {
             full = frozenG;
-            a = Math.min(1f, (t - dropStart) / (float) DROP_MS);
+            a = dropFrom + (1 - dropFrom) * Math.min(1f, (t - dropStart) / (float) DROP_MS);
             autumn = a < 1f;
         } else {
             int vm = Prefs.VACUUM_MIN[prefs.gardenAutumn];
@@ -837,8 +848,12 @@ final class GardenScene {
         if (minute != lastMinute) {
             boolean critters = prefs.gardenCritters;
             if (lastMinute >= 0 && !gap) {
-                if (animate && critters && !autumn && demoStart < 0 && dropStart < 0) startBee(t);
-                if (recording && critters) stats.addLadybugLap();
+                // The bee visits once an hour, at :50, when most flowers on the hour's digits
+                // are in full bloom (and clear of the stats bird at :45).
+                if (minute % 60 == 50 && animate && critters && !autumn && demoStart < 0 && dropStart < 0) startBee(t);
+                if (recording && critters && nPath > 1 && aStep == 0 && demoStart < 0 && dropStart < 0) {
+                    stats.addLadybugLap();
+                }
                 if (recording && lastG >= 0) {
                     int n = 0;
                     for (int ct : clusterT) if (ct > lastG && ct <= g) n++;
@@ -926,8 +941,11 @@ final class GardenScene {
         if (nPath < 2) nPath = 0;
     }
 
+    /**
+     * The hourly bee's tour: in from one side, a stop at up to four flowers on the digits
+     * (open ones first), in order across the screen, then out the other side.
+     */
     private void startBee(long t) {
-        // A flower in bloom on the time, else any flower, else a character's top.
         List<int[]> open = new ArrayList<>(), any = new ArrayList<>();
         for (int k = 0; k < slots.size(); k++) {
             for (int[] sp : spots.get(k)) {
@@ -935,21 +953,37 @@ final class GardenScene {
                 if (sp[4] >= 0) any.add(sp);
             }
         }
-        List<int[]> from = !open.isEmpty() ? open : any;
-        int[] sp = null;
-        if (!from.isEmpty()) sp = from.get(rnd.nextInt(from.size()));
-        else {
-            for (int k = 0; k < slots.size() && sp == null; k++) if (spots.get(k).length > 0) sp = spots.get(k)[0];
+        List<int[]> pool = new ArrayList<>(open);
+        if (pool.size() < BEE_STOPS) for (int[] sp : any) if (!pool.contains(sp)) pool.add(sp);
+        if (pool.isEmpty()) {
+            for (int k = 0; k < slots.size() && pool.isEmpty(); k++) if (spots.get(k).length > 0) pool.add(spots.get(k)[0]);
         }
-        if (sp == null) return;
-        int stage = Math.max(0, sp[4]);
-        beeTargetX = sp[0] - BEE.w * unit / 2;
-        beeTargetY = sp[1] - FLOWER[stage].length * unit - BEE.h * unit + unit;
-        boolean fromLeft = rnd.nextBoolean();
-        beeFromX = fromLeft ? -BEE.w * unit - 2 : cols + 2;
-        beeToX = fromLeft ? cols + 2 : -BEE.w * unit - 2;
+        if (pool.isEmpty()) return;
+        java.util.Collections.shuffle(pool, rnd);
+        final boolean fromLeft = rnd.nextBoolean();
+        List<int[]> stops = new ArrayList<>(pool.subList(0, Math.min(BEE_STOPS, pool.size())));
+        java.util.Collections.sort(stops, new java.util.Comparator<int[]>() {
+            public int compare(int[] a, int[] b) { return fromLeft ? a[0] - b[0] : b[0] - a[0]; }
+        });
+        beeN = 0;
+        int firstY = beeY(stops.get(0));
+        beeWX[beeN] = fromLeft ? -BEE.w * unit - 2 : cols + 2;
+        beeWY[beeN++] = Math.round(firstY - rows * 0.15f);
+        for (int[] sp : stops) {
+            beeWX[beeN] = sp[0] - BEE.w * unit / 2;
+            beeWY[beeN++] = beeY(sp);
+        }
+        beeWX[beeN] = fromLeft ? cols + 2 : -BEE.w * unit - 2;
+        beeWY[beeN] = Math.round(beeWY[beeN - 1] - rows * 0.25f);
+        beeN++;
+        beeDur = (long) (beeN - 1) * BEE_FLY_MS + (long) stops.size() * BEE_HOVER_MS;
         beeStart = t;
         if (recording) stats.addBee();
+    }
+
+    private int beeY(int[] sp) {
+        int stage = Math.max(0, sp[4]);
+        return sp[1] - FLOWER[stage].length * unit - BEE.h * unit + unit;
     }
 
     private void addCur(int x, int y, int w, int h) {
@@ -979,26 +1013,35 @@ final class GardenScene {
         // Bee: in, a visit at a flower, out.
         int beeX = 0, beeY = 0;
         boolean beeRight = true;
-        if (beeStart >= 0 && t - beeStart > BEE_MS) beeStart = -1;
+        if (beeStart >= 0 && t - beeStart > beeDur) beeStart = -1;
         boolean bee = beeStart >= 0 && animate && critters;
         if (bee) {
-            float e = (t - beeStart) / 1000f;
-            if (e < 1.6f) {
-                float p = e / 1.6f;
-                p = 1 - (1 - p) * (1 - p);
-                beeX = Math.round(beeFromX + (beeTargetX - beeFromX) * p);
-                beeY = Math.round(beeTargetY - (1 - p) * rows * 0.15f + (float) Math.sin(e * 9) * 2 * unit * (1 - p));
-                beeRight = beeTargetX >= beeFromX;
-            } else if (e < 3.6f) {
-                beeX = beeTargetX;
-                beeY = beeTargetY + ((int) (e * 3) % 2 == 0 ? 0 : -unit / 2 - (unit > 1 ? 0 : 1));
-                beeRight = beeTargetX >= beeFromX;
+            // Walk the tour: fly a leg, hover at the flower it reaches, fly on.
+            long e = t - beeStart;
+            int leg = 0;
+            while (leg < beeN - 1) {
+                if (e < BEE_FLY_MS) break;
+                e -= BEE_FLY_MS;
+                boolean flower = leg + 1 < beeN - 1;
+                if (flower && e < BEE_HOVER_MS) { leg = -(leg + 1) - 1; break; } // hovering
+                if (flower) e -= BEE_HOVER_MS;
+                leg++;
+            }
+            if (leg < 0) {
+                int at = -leg - 1;
+                beeX = beeWX[at];
+                beeY = beeWY[at] + ((e / 330) % 2 == 0 ? 0 : -unit / 2 - (unit > 1 ? 0 : 1));
+                beeRight = at + 1 < beeN && beeWX[at + 1] >= beeWX[at];
             } else {
-                float p = (e - 3.6f) / 1.6f;
-                p = p * p;
-                beeX = Math.round(beeTargetX + (beeToX - beeTargetX) * p);
-                beeY = Math.round(beeTargetY - p * rows * 0.25f + (float) Math.sin(e * 9) * 2 * unit * p);
-                beeRight = beeToX >= beeTargetX;
+                leg = Math.min(leg, beeN - 2);
+                float p = Math.min(1f, e / (float) BEE_FLY_MS);
+                float q = p * p * (3 - 2 * p); // ease in and out
+                int ax = beeWX[leg], ay = beeWY[leg], bx = beeWX[leg + 1], by = beeWY[leg + 1];
+                beeX = Math.round(ax + (bx - ax) * q);
+                // A little hop up between flowers, plus a wobble.
+                beeY = Math.round(ay + (by - ay) * q - (float) Math.sin(Math.PI * p) * rows * 0.06f
+                        + (float) Math.sin(t / 110.0) * unit);
+                beeRight = bx >= ax;
             }
             addCur(beeX, beeY, BEE.w * unit, BEE.h * unit);
         }
@@ -1096,7 +1139,7 @@ final class GardenScene {
 
     /** True while something moves slowly (ladybug, fireflies, the bird): 8 fps is enough. */
     boolean moving() {
-        return (prefs.gardenCritters && (nPath > 1 || afterSunset)) || birdStart >= 0;
+        return prefs.gardenCritters && (nPath > 1 || afterSunset || birdStart >= 0);
     }
 
     private void drawSprite(Sprite s, int x, int y, boolean flip, boolean behindText) {
@@ -1177,12 +1220,14 @@ final class GardenScene {
             if (sDepth[k] < 1 || sDepth[k] > 2) continue;
             if (k + 1 < nSeg && sPar[k + 1] == k && sDepth[k + 1] == sDepth[k]) continue; // mid-limb
             float x = sX1[k], y = sY1[k];
-            boolean onText = false;
-            for (int dy = -4 * unit; dy <= unit && !onText; dy += unit) for (int dx = -5 * unit; dx <= 5 * unit; dx += unit) {
-                int xx = Math.round(x) + dx, yy = Math.round(y) + dy;
-                if (xx < 0 || yy < 0 || xx >= cols || yy >= rows) continue;
-                if (text[yy * cols + xx] != 0 || planter[yy * cols + xx] != 0) { onText = true; break; }
-            }
+            // The clock's whole area (whatever the digits are), so the nest stays on one fork
+            // all day and the same after a restart.
+            int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));
+            int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H));
+            int top = rows / 2 - PixelFont.H * st - 6 * unit;
+            int bottom = rows / 2 + Math.round(rows * 0.06f) + PixelFont.H * sd + unit;
+            boolean onText = y + unit >= top && y - 4 * unit <= bottom
+                    && x + 5 * unit >= cols * 0.15f && x - 5 * unit <= cols * 0.85f;
             float score = sTh[k] - (onText ? 100 : 0) - sT1[k] / 2000f;
             if (score > bestScore) { bestScore = score; best = k; }
         }
