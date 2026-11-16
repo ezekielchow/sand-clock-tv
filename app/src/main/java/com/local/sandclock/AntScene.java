@@ -52,6 +52,7 @@ final class AntScene {
     private final byte[] oDir;            // ... and the way it faced (0 right, 1 left, 2 down, 3 up)
     private int digHead, digDir;          // set while planning a step
     private long lastDigAt = -1;          // uptime of the last cell dug (the digger holds a crumb)
+    private int lastWant = -1;            // grains dug at the last update (for the stats)
     private int nShaft;
     private final byte[] room;            // extras' chambers: 1 queen, 2 eggs, 3 food (0 none)
     private final int[][] rooms = new int[3][];   // {cx, cy, rx, ry}
@@ -138,17 +139,55 @@ final class AntScene {
         oHead = new int[order.length];
         oDir = new byte[order.length];
         shaft = new int[rows * 4];
-        planTunnels(r);
+        Calendar today = Calendar.getInstance();
+        today.set(Calendar.YEAR, day / 1000);
+        today.set(Calendar.DAY_OF_YEAR, day % 1000);
+        planTunnels(r, today);
     }
 
     void setRecording(boolean on) { recording = on && stats != null; }
 
     // ---- the day's tunnels ----
 
+    /** Boxes of the clock's characters (x0, y0, x1, y1), every digit they could show today. */
+    private int[] charBoxes = new int[0];
+    private int nBoxes;
+
+    /**
+     * Each character's box (all digits are the same size, so the box covers whatever it will
+     * show), for every layout the day can have: 24-hour is one; 12-hour has a one- and a
+     * two-digit hour. Tunnels go round these and through the gaps between them.
+     */
+    private void reserveText(Calendar day) {
+        int st = Math.max(1, Math.round(rows * 0.15f / PixelFont.H));
+        int sd = Math.max(1, Math.round(rows * 0.055f / PixelFont.H));
+        int mid = textTop + PixelFont.H * st;
+        List<int[]> boxes = new ArrayList<>();
+        int[] hours = prefs.use24h ? new int[]{12} : new int[]{9, 12};
+        for (int h : hours) {
+            Calendar c = (Calendar) day.clone();
+            c.set(Calendar.HOUR_OF_DAY, h);
+            c.set(Calendar.MINUTE, 0);
+            for (ClockText.Slot sl : ClockText.layoutAt(prefs, c, cols, rows, mid, st, sd)) {
+                // Id: part, char, "@x,top,scale".
+                String[] xyz = sl.id.substring(sl.id.indexOf('@') + 1).split(",");
+                int x = Integer.parseInt(xyz[0]), y = Integer.parseInt(xyz[1]), sc = Integer.parseInt(xyz[2]);
+                char ch = sl.id.charAt(1);
+                int w = (Character.isDigit(ch) ? 5 : PixelFont.width(String.valueOf(ch))) * sc;
+                boxes.add(new int[]{x - 1, y - 1, x + w, y + PixelFont.H * sc});
+            }
+        }
+        nBoxes = boxes.size();
+        charBoxes = new int[nBoxes * 4];
+        for (int k = 0; k < nBoxes; k++) System.arraycopy(boxes.get(k), 0, charBoxes, 4 * k, 4);
+    }
+
     private boolean reserved(int x, int y) {
         if (x < 2 || x >= cols - 2 || y < ground || y >= rows - bedRows - 2) return true;
-        // Keep clear of the clock (with a margin) and of the extras' chambers.
-        if (y >= textTop - 3 * unit && y <= textBottom + 3 * unit && x > cols * 0.13f && x < cols * 0.87f) return true;
+        for (int k = 0; k < nBoxes; k++) {
+            int b = 4 * k;
+            if (x >= charBoxes[b] && x <= charBoxes[b + 2] && y >= charBoxes[b + 1] && y <= charBoxes[b + 3]) return true;
+        }
         for (int[] rm : rooms) {
             float ex = (x - rm[0]) / (float) (rm[2] + 3 * unit), ey = (y - rm[1]) / (float) (rm[3] + 3 * unit);
             if (ex * ex + ey * ey < 1f) return true;
@@ -156,92 +195,138 @@ final class AntScene {
         return false;
     }
 
-    private void dig(int x, int y) {
+    private int[] owner;   // which gallery dug each planned cell (-1 none), and at which step
+    private int[] ownerStep;
+
+    private void dig(int x, int y, int gallery, int step) {
         if (nOrder >= order.length || reserved(x, y)) return;
         int i = y * cols + x;
         if (dug[i]) return;
         dug[i] = true; // marks "planned"; reset below so the shown state starts empty
+        owner[i] = gallery;
+        ownerStep[i] = step;
         oHead[nOrder] = digHead;
         oDir[nOrder] = (byte) digDir;
         order[nOrder++] = i;
     }
 
-    /** A tunnel step: a small round brush (3 cells wide on a TV). */
-    private void carve(float fx, float fy) {
-        int rr = Math.max(1, unit / 2);
-        int cx = Math.round(fx), cy = Math.round(fy);
-        for (int dy = -rr; dy <= rr; dy++) for (int dx = -rr; dx <= rr; dx++) {
-            if (dx * dx + dy * dy <= rr * rr) dig(cx + dx, cy + dy);
+    /** True if (x, y) would touch another gallery (or this one further back): stop there. */
+    private boolean crowded(int x, int y, int gallery, int step) {
+        for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
+            int xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= cols || yy >= rows) continue;
+            int i = yy * cols + xx;
+            if (!dug[i]) continue;
+            if (owner[i] != gallery || ownerStep[i] < step - 6) return true;
         }
+        return false;
     }
 
-    private void chamber(float fx, float fy, int rx, int ry) {
+    private void chamber(float fx, float fy, int rx, int ry, int gallery, int step) {
         for (int dy = -ry; dy <= ry; dy++) for (int dx = -rx; dx <= rx; dx++) {
             float e = dx * dx / (float) (rx * rx) + dy * dy / (float) (ry * ry);
-            if (e <= 1f) dig(Math.round(fx) + dx, Math.round(fy) + dy);
+            if (e <= 1f) dig(Math.round(fx) + dx, Math.round(fy) + dy, gallery, step);
         }
-    }
-
-    /** A random free spot in the soil for a digger to head for. */
-    private float[] goal(Random r) {
-        for (int k = 0; k < 200; k++) {
-            int x = 4 + r.nextInt(cols - 8), y = ground + 4 + r.nextInt(Math.max(1, rows - bedRows - ground - 8));
-            if (!reserved(x, y)) return new float[]{x, y};
-        }
-        return new float[]{entrance, ground + 6};
     }
 
     /**
-     * Digs the whole day's network in order. Each digger heads for a target spot somewhere in
-     * the soil, wandering a little and turning to get round the clock and the chambers, and
-     * ends in a small chamber; new diggers branch off tunnels already dug. The first one is the
-     * main shaft from the entrance, down one side of the clock to the deep soil.
-     * Stops at a day's worth of grains.
+     * The day's nest, as real ants dig it: a main shaft down from the entrance, side galleries
+     * branching off it every so often (alternating sides, sloping a little down), some with
+     * short side branches of their own, each ending in a small chamber. Galleries never cross:
+     * one stops (in a chamber) before it touches another. They are dug one after another, so
+     * the digger works along one gallery at a time. About 4 % of the soil by the end of the day.
      */
-    private void planTunnels(Random r) {
-        List<float[]> heads = new ArrayList<>(); // {x, y, angle, goalX, goalY, stuck}
-        float side = entrance < cols / 2 ? cols * 0.07f : cols * 0.93f;
-        float[] shaftHead = new float[]{entrance, ground, (float) (Math.PI / 2), side, rows - bedRows - 10 * unit, 0};
-        heads.add(shaftHead);
-        int guard = 0;
-        while (nOrder < GRAINS_PER_DAY && guard++ < 600_000) {
-            if (heads.isEmpty() || (heads.size() < 2 && r.nextInt(400) == 0)) {
-                // Branch off a tunnel already dug, toward a new spot.
-                int i = order[r.nextInt(Math.max(1, nOrder))];
-                float[] g = goal(r);
-                float x = i % cols, y = i / (float) cols;
-                heads.add(new float[]{x, y, (float) Math.atan2(g[1] - y, g[0] - x), g[0], g[1], 0});
+    private void planTunnels(Random r, Calendar day) {
+        reserveText(day);
+        owner = new int[cols * rows];
+        ownerStep = new int[cols * rows];
+        java.util.Arrays.fill(owner, -1);
+        int soil = rows - bedRows - ground;
+        int budget = Math.round(cols * soil * 0.04f);
+        // {x, y, angle, length, depth}
+        java.util.ArrayDeque<float[]> queue = new java.util.ArrayDeque<>();
+        queue.add(new float[]{entrance, ground, (float) (Math.PI / 2), soil * 1.4f, 0});
+        int gallery = 0, refills = 0;
+        while (nOrder < budget) {
+            if (queue.isEmpty()) {
+                // Out of galleries with soil to spare: branch off somewhere already dug.
+                if (nOrder == 0 || refills++ > 60) break;
+                int i = order[r.nextInt(nOrder)];
+                float ba = r.nextBoolean() ? 0.25f : (float) (Math.PI - 0.25f);
+                queue.add(new float[]{i % cols, i / cols, ba, soil * (0.25f + r.nextFloat() * 0.5f), 1});
             }
-            int hi = guard % heads.size();
-            float[] h = heads.get(hi);
-            boolean first = h == shaftHead;
-            // Steer toward the goal, with some wander.
-            float want = (float) Math.atan2(h[4] - h[1], h[3] - h[0]);
-            float diff = (float) Math.atan2(Math.sin(want - h[2]), Math.cos(want - h[2]));
-            h[2] += Math.max(-0.12f, Math.min(0.12f, diff)) + (r.nextFloat() - 0.5f) * (first ? 0.15f : 0.4f);
-            float nx = h[0] + (float) Math.cos(h[2]), ny = h[1] + (float) Math.sin(h[2]);
-            if (reserved(Math.round(nx), Math.round(ny))) {
-                h[2] += (r.nextBoolean() ? 1 : -1) * (float) (Math.PI / 2);
-                h[5]++;
-            } else {
-                h[0] = nx;
-                h[1] = ny;
-                digHead = Math.round(ny) * cols + Math.round(nx);
-                double ca = Math.cos(h[2]), sa = Math.sin(h[2]);
+            float[] g = queue.poll();
+            float x = g[0], y = g[1], a = g[2];
+            int depth = (int) g[4], len = Math.round(g[3]);
+            int nextBranch = 14 + r.nextInt(18), side = r.nextBoolean() ? 1 : -1, step = 0;
+            boolean ended = false;
+            int detourX = -1;          // the shaft walking over to a gap between characters
+            boolean straight = false;  // ... then straight down through it
+            for (; step < len && nOrder < budget; step++) {
+                // Drift gently; the shaft keeps heading down, galleries keep a slight down slope.
+                float aim = depth == 0 ? (float) (Math.PI / 2)
+                        : (Math.cos(a) >= 0 ? 0.22f : (float) (Math.PI - 0.22f));
+                if (detourX >= 0) {
+                    if (Math.abs(x - detourX) < 1f) { detourX = -1; straight = true; x = Math.round(x); }
+                    else { aim = detourX > x ? 0f : (float) Math.PI; a = aim; }
+                }
+                if (straight && y > textBottom + 3) straight = false;  // through the clock
+                if (straight) a = (float) (Math.PI / 2);
+                else if (detourX < 0) a += (aim - a) * 0.08f + (r.nextFloat() - 0.5f) * 0.22f;
+                float nx = x + (float) Math.cos(a), ny = y + (float) Math.sin(a);
+                int ix = Math.round(nx), iy = Math.round(ny);
+                if (reserved(ix, iy)) {
+                    // Round a character: try stepping sideways (the shaft) or give up (a gallery).
+                    if (depth == 0 && detourX < 0) {
+                        // Find the nearest column with a clear way down (a gap between
+                        // characters, or past the end of the text) and walk over to it.
+                        int cy = Math.round(y) + 2, best = -1;
+                        for (int d = 1; d < cols && best < 0; d++) {
+                            for (int sgn = -1; sgn <= 1 && best < 0; sgn += 2) {
+                                int cx = Math.round(x) + sgn * d;
+                                if (cx < 3 || cx >= cols - 4) continue;
+                                if (!reserved(cx, cy) && !reserved(cx + 1, cy) && !reserved(cx, cy + 6) && !reserved(cx + 1, cy + 6)) best = cx;
+                            }
+                        }
+                        if (best < 0) { ended = true; break; }
+                        detourX = best;
+                        a = detourX > x ? 0f : (float) Math.PI;
+                        continue;
+                    }
+                    ended = true;
+                    break;
+                }
+                if (step > 3 && crowded(ix, iy, gallery, step)) { ended = true; break; }
+                x = nx;
+                y = ny;
+                digHead = iy * cols + ix;
+                double ca = Math.cos(a), sa = Math.sin(a);
                 digDir = Math.abs(ca) >= Math.abs(sa) ? (ca >= 0 ? 0 : 1) : (sa >= 0 ? 2 : 3);
-                carve(nx, ny);
-                // The shaft path, one entry per cell (no repeats), so the carrier always has a
-                // direction to face.
-                int sc = Math.round(ny) * cols + Math.round(nx);
-                if (first && nShaft < shaft.length && (nShaft == 0 || shaft[nShaft - 1] != sc)) shaft[nShaft++] = sc;
+                // Two cells wide: this cell and the one beside it across the direction of travel.
+                dig(ix, iy, gallery, step);
+                if (Math.abs(ca) >= Math.abs(sa)) dig(ix, iy + 1, gallery, step);
+                else dig(ix + 1, iy, gallery, step);
+                if (depth == 0 && gallery == 0 && nShaft < shaft.length && (nShaft == 0 || shaft[nShaft - 1] != digHead)) {
+                    shaft[nShaft++] = digHead;
+                }
+                // Side branches off this gallery.
+                if (depth < 2 && detourX < 0 && !straight && --nextBranch <= 0) {
+                    nextBranch = (depth == 0 ? 22 : 18) + r.nextInt(18);
+                    float ba = side > 0 ? 0.2f + r.nextFloat() * 0.3f : (float) (Math.PI - 0.2f - r.nextFloat() * 0.3f);
+                    if (depth == 1) ba = (float) (a + side * (0.6f + r.nextFloat() * 0.4f));
+                    float bl = depth == 0 ? soil * (0.35f + r.nextFloat() * 0.6f) : soil * (0.12f + r.nextFloat() * 0.2f);
+                    queue.add(new float[]{x, y, ba, bl, depth + 1});
+                    side = -side;
+                }
             }
-            float dx = h[3] - h[0], dy = h[4] - h[1];
-            if (dx * dx + dy * dy < 9 || h[5] > 40) {
-                chamber(h[0], h[1], (3 + r.nextInt(4)) * unit, (1 + r.nextInt(2)) * unit + 1);
-                heads.remove(hi);
+            if (depth == 0 || step >= 12) {
+                int rx = (depth == 0 ? 6 : 3 + r.nextInt(3)) * unit / 2 + 2, ry = (depth == 0 ? 3 : 2) * unit / 2 + 1;
+                chamber(x, y, rx, ry, gallery, step);
             }
+            gallery++;
         }
         java.util.Arrays.fill(dug, false); // nothing is dug yet; `shown` reveals the plan
+        owner = ownerStep = null;
     }
 
     // ---- palette ----
@@ -592,10 +677,12 @@ final class AntScene {
 
         // Tunnels and hill follow the target count.
         int want = target(c, t, rainAllowed);
-        int before = shown;
+        // The tunnels show the same share of the day as the hill (the plan is about 4 % of the
+        // soil; the hill gets a grain every few seconds).
+        int wantCells = (int) ((long) nOrder * want / GRAINS_PER_DAY);
         int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
-        if (shown < want && shown < nOrder && want - shown <= 20) lastDigAt = t;
-        while (shown < want && shown < nOrder) {
+        if (shown < wantCells && wantCells - shown <= 20) lastDigAt = t;
+        while (shown < wantCells && shown < nOrder) {
             int i = order[shown++];
             dug[i] = true;
             if (!recompose) {
@@ -604,7 +691,7 @@ final class AntScene {
                 x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
             }
         }
-        while (shown > want) {
+        while (shown > wantCells) {
             int i = order[--shown];
             dug[i] = false;
             if (!recompose) {
@@ -616,9 +703,10 @@ final class AntScene {
         if (x1 >= 0) addCur(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
         // Grains dug as the day goes: count them (only live digging, as the screensaver). At
         // night the farm updates once a minute (10 grains); bigger jumps are catch-up or dig-in.
-        if (recording && shown > before && shown - before <= 20 && digInStart < 0 && !raining && !gap) {
-            for (int k = before; k < shown; k++) stats.addGrain();
+        if (recording && lastWant >= 0 && want > lastWant && want - lastWant <= 20 && digInStart < 0 && !raining && !gap) {
+            for (int k = lastWant; k < want; k++) stats.addGrain();
         }
+        lastWant = want;
         while (placed < want) {
             hill.spawnLayer = GrainGrid.layerOf(placed);
             hill.dropInstant(dropColumn(placed));
@@ -696,7 +784,7 @@ final class AntScene {
         render(c, t, animate);
     }
 
-    private float shownFrac() { return Math.min(1f, shown / (float) Math.max(1, GRAINS_PER_DAY)); }
+    private float shownFrac() { return Math.min(1f, shown / (float) Math.max(1, nOrder)); }
 
     private void addCur(int x, int y, int w, int h) {
         int x0 = Math.max(0, x), y0 = Math.max(0, y);

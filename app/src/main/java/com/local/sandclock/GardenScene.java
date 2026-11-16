@@ -119,6 +119,7 @@ final class GardenScene {
     private final byte[] extra;    // nest, eggs, chicks, mushrooms, seed (palette index)
     private long extrasKey = -1;
     private long birdStart = -1;
+    private boolean birdFromRight;
     private int birdHour = -1;
     private int[] noteCells = new int[0];
     private int noteX0, noteY0, noteW, noteH;
@@ -175,7 +176,9 @@ final class GardenScene {
             int x = r.nextInt(cols), y = r.nextInt(Math.max(1, Math.round(groundTop * 0.55f)));
             star[y * cols + x] = (byte) (1 + r.nextInt(3));
         }
-        baseX = buildTree(r, Math.round(cols * (0.36f + 0.28f * r.nextFloat())));
+        // A new spot every day, anywhere from near the left edge to near the right (the canopy is
+        // pulled back inside the screen when it would overhang).
+        baseX = buildTree(r, Math.round(cols * (0.12f + 0.76f * r.nextFloat())));
     }
 
     // ---- the tree ----
@@ -1003,8 +1006,11 @@ final class GardenScene {
         if (bug) {
             float s = (ms % 60_000) / 60_000f;
             if (!animate) s = (int) (s * 60) / 60f;
-            int k = Math.min(nPath - 1, Math.round(s * (nPath - 1)));
-            int k2 = Math.min(nPath - 1, k + 3);
+            // Up to the tip one minute, back down the next (no jump back to the root).
+            boolean up = (ms / 60_000) % 2 == 0;
+            float along = up ? s : 1 - s;
+            int k = Math.min(nPath - 1, Math.round(along * (nPath - 1)));
+            int k2 = up ? Math.min(nPath - 1, k + 3) : Math.max(0, k - 3);
             if (k2 != k) bugRight = pathX[k2] >= pathX[k];
             bugX = Math.round(pathX[k]) - bw / 2;
             bugY = Math.round(pathY[k]) - bh / 2;
@@ -1066,8 +1072,12 @@ final class GardenScene {
         boolean note = bird && bp > 0.25f && bp < 0.75f;
         boolean showBird = bird && critters;
         if (showBird) {
-            birdX = Math.round(-BIRD_UP.w * unit + bp * (cols + BIRD_UP.w * unit));
-            birdY = Math.round(rows * 0.14f + (float) Math.sin(t / 900.0) * 3 * unit);
+            float bx = bp * (cols + BIRD_UP.w * unit);
+            birdX = Math.round(birdFromRight ? cols - bx : -BIRD_UP.w * unit + bx);
+            // Flap for a while (rising a little), then glide (sinking a little), like small birds.
+            long cyc = (t - birdStart) % 2400;
+            float rise = cyc < 1600 ? cyc / 1600f : 1f - (cyc - 1600) / 800f;
+            birdY = Math.round(rows * 0.14f - rise * 2 * unit + (float) Math.sin(t / 1700.0) * 2 * unit);
             addCur(birdX, birdY, BIRD_UP.w * unit, BIRD_UP.h * unit);
         }
         if (bird || noteShown) addCur(noteX0, noteY0, noteW, noteH);
@@ -1103,7 +1113,11 @@ final class GardenScene {
             put(Math.round(pX[k]), Math.round(pY[k]), pCol[k], true);
         }
         if (bee) drawSprite((t / 70) % 2 == 0 ? BEE : BEE2, beeX, beeY, !beeRight, false);
-        if (showBird) drawSprite((t / 260) % 2 == 0 ? BIRD_UP : BIRD_DOWN, birdX, birdY, false, false);
+        if (showBird) {
+            boolean gliding = (t - birdStart) % 2400 >= 1600;
+            Sprite b = gliding ? BIRD_GLIDE : (t / 130) % 2 == 0 ? BIRD_UP : BIRD_DOWN;
+            drawSprite(b, birdX, birdY, birdFromRight, false);
+        }
         if (note) for (int i : noteCells) px[i] = pal[NOTE];
 
         nDirty = 0;
@@ -1258,6 +1272,7 @@ final class GardenScene {
             String msg = stats.gardenMessage(c, h / 2);
             if (msg == null) return false;
             birdStart = t;
+            birdFromRight = rnd.nextBoolean();
             int s = Math.max(1, unit);
             int w = PixelFont.width(msg) * s;
             int top = Math.round(rows * 0.035f);
@@ -1321,6 +1336,12 @@ final class GardenScene {
             "BB.BBBBk",
             "..BLWWB.",
             "....WW..");
+    static final Sprite BIRD_GLIDE = new Sprite("BLkW", new int[]{BIRD, BIRD_BELLY, BEAK, BIRD},
+            "........",
+            "........",
+            "BBWWBBBk",
+            "..BLLLB.",
+            "........");
     static final Sprite NEST = new Sprite("Nn", new int[]{NEST0, NEST1},
             "NnNnNnNnN",
             ".nNnNnNn.",
