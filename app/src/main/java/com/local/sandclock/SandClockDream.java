@@ -4,9 +4,10 @@ import android.service.dreams.DreamService;
 import android.view.WindowManager;
 
 /** The system screensaver. Starts when the TV has been idle for the screensaver timeout. */
-public class SandClockDream extends DreamService implements SceneView.Listener {
+public class SandClockDream extends DreamService implements SceneView.Listener, DailyScene.Host {
     private SceneView view;
     private Prefs prefs;
+    private DailyScene daily;
 
     @Override
     public void onAttachedToWindow() {
@@ -14,10 +15,23 @@ public class SandClockDream extends DreamService implements SceneView.Listener {
         setInteractive(false); // any remote key wakes the TV
         setFullscreen(true);
         prefs = Prefs.load(this);
-        view = SceneView.create(this, SceneView.pick(prefs));
+        int scene = SceneView.today(prefs);
+        view = SceneView.create(this, scene);
         view.setListener(this);
         view.setPrefs(prefs);
         setContentView(view);
+        daily = new DailyScene(this, this, scene);
+    }
+
+    /** A new day picked another scene: swap it in. */
+    @Override
+    public void showScene(int scene) {
+        view.stop();
+        view = SceneView.create(this, scene);
+        view.setListener(this);
+        view.setPrefs(prefs);
+        setContentView(view);
+        view.start();
     }
 
     @Override
@@ -25,10 +39,12 @@ public class SandClockDream extends DreamService implements SceneView.Listener {
         super.onDreamingStarted();
         SystemTweaks.ensureScreensaver(this);
         view.start();
+        daily.start();
     }
 
     @Override
     public void onDreamingStopped() {
+        daily.stop();
         view.stop();
         SystemTweaks.restoreBacklight(this);
         super.onDreamingStopped();

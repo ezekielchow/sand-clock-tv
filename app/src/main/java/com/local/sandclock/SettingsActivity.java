@@ -163,7 +163,7 @@ public class SettingsActivity extends Activity {
                 int k = 0;
                 for (int i = 0; i < options.length; i++) if (options[i] == prefs.scenes) k = i;
                 prefs.scenes = options[wrap(k + d, options.length)];
-                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.pick(prefs));
+                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.today(prefs));
             }
         });
         addRow(list, new Row("Preview shows") {
@@ -381,7 +381,7 @@ public class SettingsActivity extends Activity {
         hint.setPadding(dp(12), dp(12), 0, 0);
         list.addView(hint);
 
-        previewScene = SceneView.pick(prefs);
+        previewScene = SceneView.today(prefs);
         preview = makePreview(previewScene);
 
         setContentView(root);

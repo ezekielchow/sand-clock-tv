@@ -27,15 +27,8 @@ abstract class SceneView extends View {
         return scene == OCEAN ? new OceanClockView(c) : new SandClockView(c);
     }
 
-    /** One of the scenes the user picked, at random. */
-    static int pick(Prefs p) {
-        int n = 0;
-        for (int i = 0; i < NAMES.length; i++) if ((p.scenes & (1 << i)) != 0) n++;
-        if (n == 0) return SAND;
-        int k = new java.util.Random().nextInt(n);
-        for (int i = 0; i < NAMES.length; i++) {
-            if ((p.scenes & (1 << i)) != 0 && k-- == 0) return i;
-        }
-        return SAND;
+    /** Today's scene (see Prefs.sceneFor). */
+    static int today(Prefs p) {
+        return p.sceneFor(java.util.Calendar.getInstance());
     }
 }

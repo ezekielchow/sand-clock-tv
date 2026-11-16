@@ -143,6 +143,40 @@ final class Prefs {
                 .apply();
     }
 
+    static final int SCENE_COUNT = 2; // bits of `scenes`: SceneView.SAND, SceneView.OCEAN
+
+    /**
+     * Today's scene, from the ones chosen. Days go in blocks of as many days as there are
+     * scenes, and each block shows every chosen scene once in a shuffled order: random, but
+     * never the same scene more than twice in a row, and each gets its fair share.
+     * Fixed for the whole day, so every start of the screensaver that day shows the same one.
+     */
+    int sceneFor(java.util.Calendar c) {
+        int[] on = new int[SCENE_COUNT];
+        int n = 0;
+        for (int i = 0; i < SCENE_COUNT; i++) if ((scenes & (1 << i)) != 0) on[n++] = i;
+        if (n == 0) return 0;
+        if (n == 1) return on[0];
+        long local = c.getTimeInMillis() + c.get(java.util.Calendar.ZONE_OFFSET) + c.get(java.util.Calendar.DST_OFFSET);
+        long day = local / 86_400_000L; // days since 1970 (always positive here)
+        long block = day / n;
+        int pos = (int) (day - block * n);
+        // Shuffle the chosen scenes with a seed from the block (and the choice of scenes).
+        java.util.Random r = new java.util.Random(mix(block * 31 + scenes));
+        for (int i = n - 1; i > 0; i--) {
+            int j = r.nextInt(i + 1);
+            int t = on[i]; on[i] = on[j]; on[j] = t;
+        }
+        return on[pos];
+    }
+
+    private static long mix(long z) { // splitmix64: nearby seeds give unrelated shuffles
+        z += 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
+    }
+
     /** True if the given minute of the day falls inside the night schedule. */
     boolean isNight(int minuteOfDay) {
         if (!nightEnabled || nightStart == nightEnd) return false;

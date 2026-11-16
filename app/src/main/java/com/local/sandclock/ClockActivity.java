@@ -6,22 +6,30 @@ import android.view.View;
 import android.view.WindowManager;
 
 /** Runs the clock full screen and keeps the TV awake. Press Back to leave. */
-public class ClockActivity extends Activity implements SceneView.Listener {
+public class ClockActivity extends Activity implements SceneView.Listener, DailyScene.Host {
     /** Start with the end-of-day vacuum running (settings: "Preview end of day"). */
     static final String EXTRA_DEMO_VACUUM = "demoVacuum";
-    /** Which scene to show (default: one of the chosen scenes at random). */
+    /** Which scene to show (default: today's scene, changing at midnight). */
     static final String EXTRA_SCENE = "scene";
 
     private SceneView view;
     private Prefs prefs;
     private CloseOnScreensaver closer;
+    private DailyScene daily; // null when a scene was asked for
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 | WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        view = SceneView.create(this, getIntent().getIntExtra(EXTRA_SCENE, SceneView.pick(Prefs.load(this))));
+        int scene;
+        if (getIntent().hasExtra(EXTRA_SCENE)) {
+            scene = getIntent().getIntExtra(EXTRA_SCENE, SceneView.SAND);
+        } else {
+            scene = SceneView.today(Prefs.load(this));
+            daily = new DailyScene(this, this, scene);
+        }
+        view = SceneView.create(this, scene);
         view.setListener(this);
         setContentView(view);
         closer = CloseOnScreensaver.register(this);
@@ -54,6 +62,21 @@ public class ClockActivity extends Activity implements SceneView.Listener {
             view.demoVacuum();
         }
         view.start();
+        if (daily != null) daily.start();
+    }
+
+    /** A new day picked another scene: swap it in. */
+    @Override
+    public void showScene(int scene) {
+        view.stop();
+        view = SceneView.create(this, scene);
+        view.setListener(this);
+        view.setPrefs(prefs);
+        setContentView(view);
+        view.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        view.start();
     }
 
     @Override
@@ -64,6 +87,7 @@ public class ClockActivity extends Activity implements SceneView.Listener {
 
     @Override
     protected void onPause() {
+        if (daily != null) daily.stop();
         view.stop();
         SystemTweaks.restoreBacklight(this);
         super.onPause();
