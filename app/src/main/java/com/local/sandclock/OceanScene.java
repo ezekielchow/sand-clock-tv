@@ -93,6 +93,26 @@ final class OceanScene {
     private int whaleX, whaleY = -1000;
     private boolean whaleRight;
 
+    // ---- stats and the extras they grow (reset every two weeks) ----
+    private Stats stats;          // null: no extras (desktop tests)
+    private boolean recording;    // count what is shown (only as the screensaver)
+    private boolean whirlCounted;
+    private final byte[] extra;   // chest and trophies on the seabed (palette index)
+    private long extrasKey = -1;
+    private int[] barnacles = new int[0]; // whale sprite cells {x, y}, in the order they grow
+    // Message in a bottle: drifts along the surface every two hours; its line shows mid-way.
+    private long bottleStart = -1;
+    private int bottleHour = -1;
+    private int[] noteCells = new int[0];
+    private int noteX0, noteY0, noteW, noteH;
+    private static final int BOTTLE_MS = 90_000;
+
+    /** Stats for the extras (always) and whether to count what is shown (screensaver only). */
+    void setStats(Stats s, boolean record) {
+        stats = s;
+        recording = record && s != null;
+    }
+
     // ---- dirty rectangles ----
     private int[] prev = new int[64], cur = new int[64];
     private int nPrev, nCur;
@@ -116,6 +136,7 @@ final class OceanScene {
         text = new byte[cols * rows];
         innerSlot = new int[cols * rows];
         coral = new byte[cols * rows];
+        extra = new byte[cols * rows];
         bedTop = new int[cols];
         rnd = new Random(day * 31L + System.nanoTime());
         Random r = new Random(day * 7919L + 3);
@@ -161,6 +182,13 @@ final class OceanScene {
         }
         kelpPhase = r.nextFloat() * 6;
         java.util.Arrays.fill(innerSlot, -1);
+        List<int[]> bc = new ArrayList<>();
+        for (int y = 2; y <= 6; y++) for (int x = 0; x < WHALE.w; x++) {
+            if (WHALE.r[y].charAt(x) == 'B' && WHALE.r[y - 1].charAt(x) != '.') bc.add(new int[]{x, y});
+        }
+        java.util.Collections.shuffle(bc, new Random(11));
+        barnacles = new int[bc.size() * 2];
+        for (int k = 0; k < bc.size(); k++) { barnacles[2 * k] = bc.get(k)[0]; barnacles[2 * k + 1] = bc.get(k)[1]; }
         whirlX = cols / 2;
         whirlY = floorRow - 3 * unit;
         levelRow = emptyRow;
@@ -175,7 +203,8 @@ final class OceanScene {
             T_SHELL = 20, T_LIGHT = 21, T_SKIN = 22, DARK = 23, R_BODY = 24, R_UNDER = 25,
             A_BODY = 26, A_EYE = 27, A_TOOTH = 28, A_STALK = 29, A_LURE = 30,
             F_BODY = 31, F_TAIL = 32, C_BODY = 33, J_BELL = 34, J_IN = 35, J_TENT = 36,
-            S_STAR = 37, SH_A = 38, SH_B = 39, BUBBLE = 40, CORE = 41, N_PAL = 42;
+            S_STAR = 37, SH_A = 38, SH_B = 39, BUBBLE = 40, CORE = 41, BARN = 42, WOOD = 43, BAND = 44,
+            LOCK = 45, COIN0 = 46, COIN1 = 47, GLASS = 48, CORK = 49, NOTE = 50, N_PAL = 51;
     private static final int RAMP = 32;
     private final int[] pal = new int[N_PAL];
     private final int[] water = new int[RAMP], rays = new int[RAMP];
@@ -231,6 +260,15 @@ final class OceanScene {
         pal[SH_B] = prefs.color(0xC0A080, bf);
         pal[BUBBLE] = prefs.color(0xBFE6FF, 0.9f);
         pal[CORE] = 0xFF000000;
+        pal[BARN] = prefs.color(0xB4AC9C, 1f);
+        pal[WOOD] = prefs.color(0x7A4E2A, bf);
+        pal[BAND] = prefs.color(0x4E3218, bf);
+        pal[LOCK] = prefs.color(0xE0C050, bf);
+        pal[COIN0] = prefs.color(0xF2C94C, bf);
+        pal[COIN1] = prefs.color(0xC9982C, bf);
+        pal[GLASS] = prefs.color(0x6FB07A, 1f);
+        pal[CORK] = prefs.color(0xA07850, 1f);
+        pal[NOTE] = prefs.color(0xE8F4FF, 0.9f);
         for (int k = 0; k < RAMP; k++) {
             float f = k / (RAMP - 1f);
             int c = mix(0x2A6FA8, 0x061830, f);
@@ -259,6 +297,7 @@ final class OceanScene {
         if (sd == 1) return pal[SAND0 + ((h >>> 28) % 3)];
         if (sd == 2) return pal[ROCK0 + ((h >>> 31) & 1)];
         if (deco[i] != 0) return pal[deco[i]];
+        if (extra[i] != 0) return pal[extra[i]];
         int surf = levelRow + wv[x];
         boolean wet = y >= surf;
         if (text[i] != 0) return wet ? pal[TEXT_WET] : pal[TEXT];
@@ -534,6 +573,7 @@ final class OceanScene {
     private void spout() {
         int bx = whaleX + (whaleRight ? 19 : WHALE.w - 1 - 19) * unit + unit / 2;
         int by = whaleY + 2 * unit;
+        if (recording) stats.addSpout();
         for (int k = 0; k < 40; k++) {
             float a = (rnd.nextFloat() - 0.5f);
             addParticle(P_DROP, bx, by, a * 0.35f, -(1.0f + rnd.nextFloat() * 0.7f), rnd.nextInt(14));
@@ -581,6 +621,7 @@ final class OceanScene {
                 if (kind == 4) top = Math.max(top, bottom - 12 * unit);
                 if (m.school > 0) { top += 8 * unit; bottom -= 6 * unit; }
                 if (bottom > top) {
+                    if (recording) stats.sawAnimal(kind); // same order as Stats.FISH..ANGLER
                     m.y = top + rnd.nextInt(bottom - top);
                     m.dir = rnd.nextBoolean() ? 1 : -1;
                     int w = m.frames[0].w * unit + (m.school > 0 ? 26 * unit : 0);
@@ -599,6 +640,7 @@ final class OceanScene {
             m.x0 = m.dir > 0 ? -CRAB.w * unit : cols + 1;
             m.born = t;
             crab = m;
+            if (recording) stats.sawAnimal(Stats.CRAB);
         }
     }
 
@@ -638,6 +680,7 @@ final class OceanScene {
             }
             wave = nw;
             if (lastMinute >= 0 && animate && !gap && whaleY > -1000 && !whirlDiving(c, t)) spout();
+            if (lastMinute >= 0 && !gap && recording) stats.addLap(); // the whale crossed once more
             lastMinute = minute;
             recompose = true;
         }
@@ -658,6 +701,10 @@ final class OceanScene {
                 addCur(b0[0], b0[1], b0[2], b0[3]);
                 addCur(kelpBox[0], kelpBox[1], kelpBox[2], kelpBox[3]);
             }
+        }
+        if (minute != lastExtrasMinute) {
+            lastExtrasMinute = minute;
+            if (buildExtras(c)) recompose = true;
         }
         if (recompose) composeAll(fadeStart >= 0 ? oldWave : wave);
 
@@ -687,6 +734,7 @@ final class OceanScene {
     }
 
     private long lastKelpAt;
+    private int lastExtrasMinute = -1;
 
     private boolean kelpTick(long t) {
         if (t - lastKelpAt < 2500) return false;
@@ -731,6 +779,10 @@ final class OceanScene {
             whaleX = Math.round(whaleX + (whirlX - ww / 2 - whaleX) * p);
             wy = Math.round(wy + (whirlY - wh / 2 - wy) * p);
             whaleShown = left > 1000;
+            if (!whaleShown && !whirlCounted && demoStart < 0 && recording) {
+                whirlCounted = true;
+                stats.addWhirlpool();
+            }
         }
         whaleY = wy;
 
@@ -755,6 +807,26 @@ final class OceanScene {
             else addCur(x, y, w, h);
         }
         if (whaleShown) addCur(whaleX, whaleY, ww, wh);
+        boolean calf = whaleShown && stats != null && stats.hasCalf();
+        int calfX = 0, calfY = 0, cw = WHALE.w * calfUnit(), ch = WHALE.h * calfUnit();
+        if (calf) {
+            // Swims just behind its mother, a little lower.
+            calfX = whaleRight ? whaleX - cw - 3 * unit : whaleX + ww + 3 * unit;
+            calfY = whaleY + wh / 2;
+            addCur(calfX, calfY, cw, ch);
+        }
+        int bottleX = 0, bottleY = 0;
+        boolean bottle = bottleUpdate(c, t, animate);
+        float bp = bottle ? (t - bottleStart) / (float) BOTTLE_MS : 0f;
+        boolean note = bottle && bp > 0.25f && bp < 0.75f;
+        if (bottle) {
+            bottleX = Math.round(-BOTTLE.w * unit + bp * (cols + BOTTLE.w * unit));
+            bottleY = surfAt(bottleX + BOTTLE.w * unit / 2) - 2 * unit;
+            addCur(bottleX, bottleY, BOTTLE.w * unit, BOTTLE.h * unit);
+        }
+        // The line's area is restored for one more frame after it goes, to erase it.
+        if (bottle || noteShown) addCur(noteX0, noteY0, noteW, noteH);
+        noteShown = note;
         if (nP > 0) {
             int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
             for (int k = 0; k < nP; k++) {
@@ -800,7 +872,13 @@ final class OceanScene {
             if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
             px[y * cols + x] = pal[pKind[k] == P_BUBBLE ? BUBBLE : FOAM];
         }
-        if (whaleShown) drawSprite(WHALE, whaleX, whaleY, !whaleRight, false, false);
+        if (calf) drawSprite(WHALE, calfX, calfY, !whaleRight, false, false, calfUnit());
+        if (whaleShown) {
+            drawSprite(WHALE, whaleX, whaleY, !whaleRight, false, false);
+            drawBarnacles();
+        }
+        if (bottle) drawSprite(BOTTLE, bottleX, bottleY, false, false, false);
+        if (note) for (int i : noteCells) px[i] = pal[NOTE];
 
         // Hand the changed rectangles to the view.
         nDirty = 0;
@@ -849,13 +927,19 @@ final class OceanScene {
     }
 
     private void drawSprite(Sprite s, int x, int y, boolean flip, boolean wetOnly, boolean behindText) {
-        for (int sy = 0; sy < s.h * unit; sy++) {
+        drawSprite(s, x, y, flip, wetOnly, behindText, unit);
+    }
+
+    private int calfUnit() { return Math.max(1, unit / 2); }
+
+    private void drawSprite(Sprite s, int x, int y, boolean flip, boolean wetOnly, boolean behindText, int u) {
+        for (int sy = 0; sy < s.h * u; sy++) {
             int yy = y + sy;
             if (yy < 0 || yy >= rows) continue;
-            for (int sx = 0; sx < s.w * unit; sx++) {
+            for (int sx = 0; sx < s.w * u; sx++) {
                 int xx = x + sx;
                 if (xx < 0 || xx >= cols) continue;
-                int pi = s.at(sx / unit, sy / unit, flip);
+                int pi = s.at(sx / u, sy / u, flip);
                 if (pi < 0) continue;
                 int i = yy * cols + xx;
                 if (behindText && (text[i] != 0 || solid[i] != 0)) continue;
@@ -863,6 +947,110 @@ final class OceanScene {
                 px[i] = pal[pi];
             }
         }
+    }
+
+    // ---- extras ----
+
+    private boolean noteShown;
+
+    /** Barnacles on the whale's back: more the longer it has swum these two weeks. */
+    private void drawBarnacles() {
+        if (stats == null) return;
+        int n = Math.round(stats.oceanGrowth() * Math.min(28, barnacles.length / 2));
+        for (int k = 0; k < n; k++) {
+            int sx = barnacles[2 * k], sy = barnacles[2 * k + 1];
+            int fx = whaleRight ? sx : WHALE.w - 1 - sx;
+            int x = whaleX + fx * unit + (k % unit), y = whaleY + sy * unit + ((k / 2) % unit);
+            if (x >= 0 && y >= 0 && x < cols && y < rows) px[y * cols + x] = pal[BARN];
+        }
+    }
+
+    /**
+     * The treasure chest (fills with coins over the two weeks) and the trophies of animals
+     * seen often, on the seabed. Rebuilt only when they change. True if anything changed.
+     */
+    private boolean buildExtras(Calendar c) {
+        if (stats == null) return false;
+        stats.refresh(c);
+        float g = stats.oceanGrowth();
+        int coins = Math.round(g * 20);
+        int[] tro = stats.trophies();
+        long key = stats.period * 10_000 + (g > 0 ? 1000 : 0) + coins * 10 + tro.length;
+        if (key == extrasKey) return false;
+        extrasKey = key;
+        java.util.Arrays.fill(extra, (byte) 0);
+        Random r = new Random(stats.period * 977 + 5);
+        int cx = Math.round(cols * (0.12f + 0.76f * r.nextFloat()));
+        if (g > 0) {
+            int x0 = cx - CHEST.w * unit / 2;
+            int y0 = bedTop[Math.max(0, Math.min(cols - 1, cx))] - CHEST.h * unit + unit;
+            stamp(CHEST, x0, y0);
+            // Coins heap up inside the open chest, from the middle out, bottom row first.
+            int placed = 0;
+            for (int row = 2; row >= 1 && placed < coins; row--) {
+                for (int k = 0; k < 10 && placed < coins; k++) {
+                    int col = 1 + (k % 2 == 0 ? 5 + k / 2 : 4 - k / 2);
+                    fillCell(x0 + col * unit, y0 + row * unit, (placed % 3 == 0) ? COIN1 : COIN0);
+                    placed++;
+                }
+            }
+        }
+        // Trophies in a row along the seabed, kept clear of the chest.
+        for (int k = 0; k < tro.length; k++) {
+            Sprite s = TROPHIES[tro[k]];
+            int x = Math.round(cols * (0.06f + 0.88f * (k + 0.5f) / 6f));
+            if (g > 0 && Math.abs(x - cx) < 14 * unit) x += 16 * unit;
+            if (x < 0 || x + s.w * unit >= cols) continue;
+            int y = bedTop[x + s.w * unit / 2] - s.h * unit + unit;
+            stamp(s, x, y);
+        }
+        return true;
+    }
+
+    private void stamp(Sprite s, int x, int y) {
+        for (int sy = 0; sy < s.h * unit; sy++) for (int sx = 0; sx < s.w * unit; sx++) {
+            int pi = s.at(sx / unit, sy / unit, false);
+            if (pi >= 0) fillPx(x + sx, y + sy, pi);
+        }
+    }
+
+    private void fillCell(int x, int y, int pi) {
+        for (int dy = 0; dy < unit; dy++) for (int dx = 0; dx < unit; dx++) fillPx(x + dx, y + dy, pi);
+    }
+
+    private void fillPx(int x, int y, int pi) {
+        if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+        int i = y * cols + x;
+        if (solid[i] == 0) extra[i] = (byte) pi;
+    }
+
+    /**
+     * Every two hours (at :15) a bottle drifts along the surface for 90 s; while it passes the
+     * middle, a line about the whale's lifetime stats shows at the top of the screen. True while the bottle is out.
+     */
+    private boolean bottleUpdate(Calendar c, long t, boolean animate) {
+        if (stats == null || !animate || whirl) { bottleStart = -1; return false; }
+        int h = c.get(Calendar.HOUR_OF_DAY), m = c.get(Calendar.MINUTE);
+        if (bottleStart < 0 && h % 2 == 0 && m == 15 && c.get(Calendar.SECOND) < 30 && bottleHour != h) {
+            bottleHour = h;
+            bottleStart = t;
+            String msg = stats.oceanMessage(c, h / 2);
+            int sc = Math.max(1, unit);
+            int w = PixelFont.width(msg) * sc;
+            int top = Math.round(rows * 0.035f); // above the clock, clear of the digits
+            int left = Math.max(0, (cols - w) / 2);
+            List<Integer> cells = new ArrayList<>();
+            int x = left;
+            for (int k = 0; k < msg.length(); k++) {
+                for (int i : PixelFont.cells(msg.charAt(k), x, top, sc, cols, rows)) cells.add(i);
+                x += PixelFont.advance(msg.charAt(k), sc);
+            }
+            noteCells = new int[cells.size()];
+            for (int k = 0; k < noteCells.length; k++) noteCells[k] = cells.get(k);
+            noteX0 = left; noteY0 = top; noteW = Math.min(cols, w + sc); noteH = PixelFont.H * sc;
+        }
+        if (bottleStart >= 0 && t - bottleStart > BOTTLE_MS) bottleStart = -1;
+        return bottleStart >= 0;
     }
 
     // ---- sprites (original pixel art) ----
@@ -950,6 +1138,29 @@ final class OceanScene {
             ".t.t.t.",
             "t..t..t",
             ".t.t.t.");
+    static final Sprite CHEST = new Sprite("WbLkl", new int[]{WOOD, BAND, WOOD, LOCK, BAND},
+            ".llllllllll.",
+            "L..........L",
+            "L..........L",
+            "bbbbbbbbbbbb",
+            "WbWWWWWWWWbW",
+            "WbWWWkkWWWbW",
+            "WbWWWWWWWWbW",
+            "bbbbbbbbbbbb");
+    static final Sprite BOTTLE = new Sprite("GCN", new int[]{GLASS, CORK, NOTE},
+            "......C",
+            ".GGGGGC",
+            "GGNNGG.",
+            ".GGGG..");
+    /** One trophy per animal (Stats order): fish bones, turtle shell, ray, glow stone, lure, claw. */
+    static final Sprite[] TROPHIES = {
+            new Sprite("#", new int[]{SH_A}, "#.#.#.", "######", "#.#.#."),
+            new Sprite("Ss", new int[]{T_SHELL, T_LIGHT}, ".sss.", "SsSsS", "S.S.S"),
+            new Sprite("R", new int[]{R_BODY}, "..R..", ".RRR.", "RRRRR", "..R.."),
+            new Sprite("J", new int[]{J_BELL}, ".JJ.", "JJJJ", ".JJ."),
+            new Sprite("La", new int[]{A_LURE, A_STALK}, "L..", ".a.", "..a", "aa."),
+            new Sprite("C", new int[]{C_BODY}, "CC.C", "C..C", ".CC."),
+    };
     static final Sprite STAR = new Sprite("S", new int[]{S_STAR},
             "..S..", ".SSS.", "SSSSS", ".S.S.", "S...S");
     static final Sprite SHELL = new Sprite("Ww", new int[]{SH_A, SH_B},

@@ -109,6 +109,24 @@ public class SandClockView extends SceneView {
     private final java.util.Random rnd = new java.util.Random();
     private final Paint starPaint = new Paint();
 
+    // Extras from Stats (reset every two weeks): bedrock with fossils under the sand, a line in
+    // the sky once an hour, and a constellation on the dim night clock.
+    private int bedRows;               // bedrock height in cells (grows slowly, set at build)
+    private Bitmap bedLayer;
+    private final Rect bedDst = new Rect();
+    private int[] note = new int[0];   // the sky line's colour over empty cells, 0 = none
+    private int[] noteCells = new int[0];
+    private int nNote;
+    private int noteHour = -1;
+    private long noteUntil;
+    /** The hourglass constellation, traced in order (unit square); a star per few hours of sand. */
+    private static final float[][] CONSTELLATION = {
+            {0f, 0f}, {0.5f, 0f}, {1f, 0f}, {0.75f, 0.25f}, {0.55f, 0.5f}, {0.75f, 0.75f},
+            {1f, 1f}, {0.5f, 1f}, {0f, 1f}, {0.25f, 0.75f}, {0.45f, 0.5f}, {0.25f, 0.25f}};
+    /** Fossils in the bedrock (4×3 cells): an ammonite and a bone, alternating. */
+    private static final String[][] FOSSILS = {
+            {".##.", "#.##", ".##."}, {"#..#", "####", "#..#"}};
+
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
@@ -198,7 +216,12 @@ public class SandClockView extends SceneView {
         boolean random = prefs.dropPos == Prefs.DROP_RANDOM;
         float frac = (random ? 50 : prefs.dropPos) / 100f;
         cell = Math.max(1, Math.round(h / (float) GRID_ROWS));
-        int cols = (int) Math.ceil(w / cell), rows = (int) Math.ceil(h / cell);
+        Stats st = stats();
+        st.refresh(c);
+        // Bedrock under the sand: up to 8 cells over the two weeks; it only grows at a rebuild
+        // (screensaver start, midnight), so it never shifts the sand mid-day.
+        bedRows = Math.round(8 * st.sandGrowth());
+        int cols = (int) Math.ceil(w / cell), rows = (int) Math.ceil(h / cell) - bedRows;
         int day = dayKey(c);
         grid = new GrainGrid(cols, rows, day, GrainGrid.slideFor(random ? RANDOM_SLIDE_AT : prefs.dropPos));
         gridDay = day;
@@ -210,6 +233,10 @@ public class SandClockView extends SceneView {
         shakeUntil = -1;
         pendingSlots = null;
         px = new int[cols * rows];
+        note = new int[cols * rows];
+        nNote = 0;
+        noteHour = -1;
+        bedLayer = null;
         sky = new int[cols * rows];
         nSky = 0;
         skyKey = -1;
@@ -353,6 +380,7 @@ public class SandClockView extends SceneView {
         if (grid != null) {
             updateColors(); // also at night, so the dim clock's moon has its colours
             decorate(c);
+            if (!previewMode) countTime(SAND, c, isNight());
         }
 
         if (!vacuumOn && !draining && !previewMode && (demoStart >= 0
@@ -446,6 +474,7 @@ public class SandClockView extends SceneView {
     /** Releases the next grain of the day, tagged with the hour it falls in. */
     private void spawnNext(boolean instant) {
         grid.spawnLayer = GrainGrid.layerOf(spawned);
+        if (recording && !previewMode) stats().addGrain();
         if (instant) grid.dropInstant(dropColumn(spawned));
         else grid.spawn(dropColumn(spawned));
         spawned++;
@@ -456,6 +485,7 @@ public class SandClockView extends SceneView {
     /** Keeps the sun or moon in place and sets a surface grain glinting now and then. */
     private void decorate(Calendar c) {
         updateSky(c);
+        updateNote(c);
         if (glint >= 0) { grid.markCell(glint); glint = -1; }
         if (isNight() || draining || vacuumOn || prefs.anim == Prefs.ANIM_OFF) return;
         if (rnd.nextFloat() < 0.4f) {
@@ -498,7 +528,7 @@ public class SandClockView extends SceneView {
         int r = Math.max(3, Math.round(rows * (sun ? 0.026f : 0.022f)));
         int core = prefs.color(sun ? 0xFFD27A : 0xE8E4D0, sun ? 1f : 0.85f);
         int edge = prefs.color(sun ? 0xF0A850 : 0xC8C4B4, sun ? 1f : 0.85f);
-        double phase = sun ? 0 : moonPhase(c.getTimeInMillis());
+        double phase = sun ? 0 : Sun.moonPhase(c.getTimeInMillis());
         if (skyCells.length < (2 * r + 1) * (2 * r + 1)) skyCells = new int[(2 * r + 1) * (2 * r + 1)];
         for (int dy = -r; dy <= r; dy++) {
             double w = Math.sqrt(Math.max(0, r * r - dy * dy + r * 0.8));
@@ -521,11 +551,66 @@ public class SandClockView extends SceneView {
         }
     }
 
-    /** Moon age as a fraction of the cycle: 0 new, 0.5 full. */
-    private static double moonPhase(long ms) {
-        double days = ms / 86_400_000.0 + 2440587.5 - 2451550.1;
-        double f = days / 29.530588853;
-        return f - Math.floor(f);
+    /**
+     * Once an hour (at :30, for 12 s) a line about the sand's lifetime stats appears near the
+     * top of the sky, drawn over empty cells only (sand in front of it hides it).
+     */
+    private void updateNote(Calendar c) {
+        long now = System.currentTimeMillis();
+        if (nNote > 0 && (now > noteUntil || isNight() || vacuumOn || draining)) {
+            for (int k = 0; k < nNote; k++) { note[noteCells[k]] = 0; grid.markCell(noteCells[k]); }
+            nNote = 0;
+        }
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        if (nNote > 0 || isNight() || vacuumOn || draining || noteHour == h) return;
+        if (c.get(Calendar.MINUTE) != 30 || c.get(Calendar.SECOND) > 20) return;
+        noteHour = h;
+        noteUntil = now + 12_000;
+        String msg = stats().sandMessage(c, h);
+        int cols = grid.cols, rows = grid.rows;
+        int sc = Math.max(1, Math.round(rows / 135f));
+        int left = Math.max(0, (cols - PixelFont.width(msg) * sc) / 2);
+        int top = Math.round(rows * 0.035f);
+        java.util.ArrayList<Integer> cells = new java.util.ArrayList<>();
+        int x = left;
+        for (int k = 0; k < msg.length(); k++) {
+            for (int i : PixelFont.cells(msg.charAt(k), x, top, sc, cols, rows)) cells.add(i);
+            x += PixelFont.advance(msg.charAt(k), sc);
+        }
+        if (noteCells.length < cells.size()) noteCells = new int[cells.size()];
+        int col = prefs.textColor(0.75f);
+        for (int i : cells) {
+            noteCells[nNote++] = i;
+            note[i] = col;
+            grid.markCell(i);
+        }
+    }
+
+    /** Bedrock: dark stone in faint strata, with this fortnight's fossils. */
+    private void buildBedrock() {
+        if (bedRows <= 0) { bedLayer = null; return; }
+        int cols = grid.cols;
+        int[] p = new int[cols * bedRows];
+        int a = prefs.color(0x3A322A, darkStyle() ? 0.7f : 1f), b = prefs.color(0x2C2620, darkStyle() ? 0.7f : 1f);
+        for (int y = 0; y < bedRows; y++) for (int x = 0; x < cols; x++) {
+            int hsh = (y * cols + x) * 0x9E3779B1;
+            p[y * cols + x] = ((y + ((hsh >>> 30) & 1)) % 3 == 0) ? b : a;
+        }
+        int bone = prefs.color(0xD8CCB0, 0.6f);
+        int n = stats().fossils();
+        if (bedRows >= 4) {
+            for (int k = 0; k < n; k++) {
+                String[] f = FOSSILS[k % 2];
+                int fx = Math.round(cols * (0.07f + 0.86f * (k + 0.5f) / 8f)) - 2;
+                int fy = Math.max(0, (bedRows - 3) / 2 + (k % 2));
+                for (int r = 0; r < 3; r++) for (int q = 0; q < 4; q++) {
+                    if (f[r].charAt(q) != '#') continue;
+                    int x = fx + q, y = fy + r;
+                    if (x >= 0 && x < cols && y < bedRows) p[y * cols + x] = bone;
+                }
+            }
+        }
+        bedLayer = Bitmap.createBitmap(p, cols, bedRows, Bitmap.Config.ARGB_8888);
     }
 
     /** Dim night clock: a few faint stars and the moon. */
@@ -538,11 +623,41 @@ public class SandClockView extends SceneView {
             float l = x * cell, t = dst.top + y * cell;
             canvas.drawRect(l, t, l + cell, t + cell, starPaint);
         }
+        drawConstellation(canvas);
         for (int k = 0; k < nSky; k++) {
             int i = skyCells[k];
             starPaint.setColor(dimColor(sky[i]));
             float l = (i % grid.cols) * cell, t = dst.top + (i / grid.cols) * cell;
             canvas.drawRect(l, t, l + cell, t + cell, starPaint);
+        }
+    }
+
+    /** The fortnight's constellation: its stars so far, joined by faint dotted lines. */
+    private void drawConstellation(Canvas canvas) {
+        int n = stats().stars();
+        if (n <= 0) return;
+        float bw = grid.cols * 0.14f, bh = grid.rows * 0.3f;
+        float ox = grid.cols * 0.07f, oy = grid.rows * 0.08f;
+        int line = prefs.nightBacklight ? 0xFF1C1C24 : 0xFF26262E;
+        int star = prefs.nightBacklight ? 0xFF4A4A58 : 0xFF62627A;
+        for (int k = 0; k < n; k++) {
+            float[] p = CONSTELLATION[k];
+            boolean closed = n == CONSTELLATION.length;
+            if (k > 0 || closed) {
+                float[] q = CONSTELLATION[k > 0 ? k - 1 : CONSTELLATION.length - 1];
+                float x0 = ox + q[0] * bw, y0 = oy + q[1] * bh, x1 = ox + p[0] * bw, y1 = oy + p[1] * bh;
+                int steps = (int) (Math.hypot(x1 - x0, y1 - y0) / 3);
+                starPaint.setColor(line);
+                for (int s = 1; s < steps; s++) {
+                    int x = Math.round(x0 + (x1 - x0) * s / steps), y = Math.round(y0 + (y1 - y0) * s / steps);
+                    canvas.drawRect(x * cell, dst.top + y * cell, (x + 1) * cell, dst.top + (y + 1) * cell, starPaint);
+                }
+            }
+        }
+        starPaint.setColor(star);
+        for (int k = 0; k < n; k++) {
+            int x = Math.round(ox + CONSTELLATION[k][0] * bw), y = Math.round(oy + CONSTELLATION[k][1] * bh);
+            canvas.drawRect(x * cell, dst.top + y * cell, (x + 2) * cell, dst.top + (y + 2) * cell, starPaint);
         }
     }
 
@@ -657,6 +772,7 @@ public class SandClockView extends SceneView {
             for (int i = 0; i < 4; i++) shades[l][i] = prefs.color(tinted, f[i]);
         }
         glintCol = prefs.color(0xFFF4DC, 1f);
+        buildBedrock();
         background = darkStyle() ? prefs.sandColor(Prefs.BACKGROUND_F[prefs.background]) : Color.BLACK;
         textCol = prefs.textColor(1f);
         grid.markAll();
@@ -668,7 +784,10 @@ public class SandClockView extends SceneView {
         // Letter walls and top edges, drawn right in the sand picture. Top edges stay drawn
         // even with sand passing through, so outlines stay whole inside the pile.
         if (v == GrainGrid.SOLID || (lid.length > i && lid[i])) return textCol;
-        if (v != GrainGrid.SAND) return sky.length > i && sky[i] != 0 ? sky[i] : background;
+        if (v != GrainGrid.SAND) {
+            if (note.length > i && note[i] != 0) return note[i];
+            return sky.length > i && sky[i] != 0 ? sky[i] : background;
+        }
         if (i == glint) return glintCol;
         int hsh = i * 0x9E3779B1;
         return shades[grid.layer[i]][(hsh >>> 28) & 3];
@@ -735,8 +854,10 @@ public class SandClockView extends SceneView {
         int w = getWidth(), h = getHeight();
         canvas.drawColor(Color.BLACK);
         if (w == 0 || h == 0 || grid == null) return;
-        // Grid is anchored to the bottom of the screen (its top row may sit just off-screen).
-        dst.set(0, h - Math.round(grid.rows * cell), Math.round(grid.cols * cell), h);
+        // Grid sits on the bedrock at the bottom of the screen (its top row may be off-screen).
+        int floor = h - Math.round(bedRows * cell);
+        dst.set(0, floor - Math.round(grid.rows * cell), Math.round(grid.cols * cell), floor);
+        bedDst.set(0, floor, Math.round(grid.cols * cell), h);
 
         if (isNight() && !draining && !vacuumOn) {
             if (prefs.nightStyle == 1) {
@@ -749,6 +870,7 @@ public class SandClockView extends SceneView {
         flushPixels();
         Paint p = isNight() ? dimPaint : pixelPaint;
         canvas.drawBitmap(scene, null, dst, p);
+        if (bedLayer != null) canvas.drawBitmap(bedLayer, null, bedDst, p);
         if (vacuumOn) drawHole(canvas);
 
     }

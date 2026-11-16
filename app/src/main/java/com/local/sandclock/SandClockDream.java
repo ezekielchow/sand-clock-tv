@@ -26,11 +26,13 @@ public class SandClockDream extends DreamService implements SceneView.Listener, 
     /** A new day picked another scene: swap it in. */
     @Override
     public void showScene(int scene) {
+        view.setRecording(false);
         view.stop();
         view = SceneView.create(this, scene);
         view.setListener(this);
         view.setPrefs(prefs);
         setContentView(view);
+        view.setRecording(true);
         view.start();
     }
 
@@ -38,6 +40,7 @@ public class SandClockDream extends DreamService implements SceneView.Listener, 
     public void onDreamingStarted() {
         super.onDreamingStarted();
         SystemTweaks.ensureScreensaver(this);
+        view.setRecording(true);
         view.start();
         daily.start();
     }
@@ -45,6 +48,7 @@ public class SandClockDream extends DreamService implements SceneView.Listener, 
     @Override
     public void onDreamingStopped() {
         daily.stop();
+        view.setRecording(false);
         view.stop();
         SystemTweaks.restoreBacklight(this);
         super.onDreamingStopped();

@@ -176,6 +176,8 @@ public class OceanClockView extends SceneView {
             }
         }
         boolean animate = prefs.anim != Prefs.ANIM_OFF && !isNight();
+        countTime(OCEAN, c, isNight());
+        scene.setStats(stats(), recording && !previewMode);
         scene.update(c, t, animate, !previewMode && reset);
         upload();
     }

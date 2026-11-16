@@ -32,6 +32,13 @@ final class Sun {
         return new int[]{((rise % 1440) + 1440) % 1440, ((set % 1440) + 1440) % 1440};
     }
 
+    /** Moon age as a fraction of the cycle: 0 new, 0.5 full. */
+    static double moonPhase(long ms) {
+        double days = ms / 86_400_000.0 + 2440587.5 - 2451550.1;
+        double f = days / 29.530588853;
+        return f - Math.floor(f);
+    }
+
     /** 0 in daytime, easing to 1 from 30 min before sunset to 60 min after; back to 0 after sunrise. */
     static float warmth(int city, Calendar now) {
         if (city <= 0) return 0f;
