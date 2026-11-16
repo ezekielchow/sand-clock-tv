@@ -28,15 +28,19 @@ final class Prefs {
     boolean pourIn = true;
     /** End of the day: a hole opens this many minutes before midnight and sucks the sand away
      *  (0 = the floor opens at midnight instead). */
-    static final String[] VACUUM = {"Off (floor opens)", "1 min", "2 min", "5 min", "10 min"};
+    static final String[] VACUUM = {"Off (empties at midnight)", "1 min", "2 min", "5 min", "10 min"};
     static final int[] VACUUM_MIN = {0, 1, 2, 5, 10};
     int vacuum = 3;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
-    static final String[] STYLES = {"Black sand", "Dark sand", "Glowing sand"};
+    static final String[] STYLES = {"Black", "Dark", "Glowing"};
+    /** Scenes to pick from at random, bit per SceneView scene (1 = sand, 2 = ocean). */
+    int scenes = 3;
     int style = 0;
-    /** Where grains fall from, % across the top of the screen. */
+    /** Where grains fall from, % across the top of the screen, or DROP_RANDOM. */
     int dropPos = 50;
+    /** dropPos value for "Random": a new spot every so often, a different plan each day. */
+    static final int DROP_RANDOM = 0;
     /** How far the stream drifts back and forth around dropPos. */
     static final String[] SWAY = {"Off", "Gentle", "Wide"};
     static final float[] SWAY_AMP = {0f, 0.18f, 0.40f}; // share of screen width, each side
@@ -68,8 +72,12 @@ final class Prefs {
         SharedPreferences s = sp(c);
         Prefs p = new Prefs();
         p.style = clamp(s.getInt("style", 0), STYLES.length);
+        p.scenes = s.getInt("scenes", 3) & 3;
+        if (p.scenes == 0) p.scenes = 1;
         // Outside 15..85 % the pile can't hold a full day before reaching the top.
-        p.dropPos = Math.max(GrainGrid.MIN_DROP, Math.min(GrainGrid.MAX_DROP, s.getInt("dropPos", 50)));
+        int dp = s.getInt("dropPos", 50);
+        p.dropPos = dp == DROP_RANDOM ? DROP_RANDOM
+                : Math.max(GrainGrid.MIN_DROP, Math.min(GrainGrid.MAX_DROP, dp));
         p.sway = clamp(s.getInt("sway", 1), SWAY.length);
         p.theme = clamp(s.getInt("theme", 0), THEMES.length);
         p.brightness = clamp(s.getInt("brightness", 1), BRIGHTNESS.length);
@@ -93,6 +101,7 @@ final class Prefs {
     void save(Context c) {
         sp(c).edit()
                 .putInt("style", style)
+                .putInt("scenes", scenes)
                 .putInt("dropPos", dropPos)
                 .putInt("sway", sway)
                 .putInt("theme", theme)
@@ -126,6 +135,8 @@ final class Prefs {
     int textColor(float extra) { return scaled(THEME_COLORS[theme][2], extra); }
     int sandColor(float extra) { return scaled(THEME_COLORS[theme][0], extra); }
     int glassColor(float extra) { return scaled(THEME_COLORS[theme][1], extra); }
+    /** Any colour, with the brightness setting and evening warmth applied. */
+    int color(int rgb, float extra) { return scaled(rgb, extra); }
 
     /** Darkens a colour by the brightness setting (dim pixels = less light on mini-LED). */
     private int scaled(int color, float extra) {

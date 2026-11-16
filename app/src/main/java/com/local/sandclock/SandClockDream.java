@@ -4,8 +4,8 @@ import android.service.dreams.DreamService;
 import android.view.WindowManager;
 
 /** The system screensaver. Starts when the TV has been idle for the screensaver timeout. */
-public class SandClockDream extends DreamService implements SandClockView.Listener {
-    private SandClockView view;
+public class SandClockDream extends DreamService implements SceneView.Listener {
+    private SceneView view;
     private Prefs prefs;
 
     @Override
@@ -14,7 +14,7 @@ public class SandClockDream extends DreamService implements SandClockView.Listen
         setInteractive(false); // any remote key wakes the TV
         setFullscreen(true);
         prefs = Prefs.load(this);
-        view = new SandClockView(this);
+        view = SceneView.create(this, SceneView.pick(prefs));
         view.setListener(this);
         view.setPrefs(prefs);
         setContentView(view);

@@ -35,7 +35,10 @@ public class SettingsActivity extends Activity {
     }
 
     private Prefs prefs;
-    private SandClockView preview;
+    private SceneView preview;
+    private LinearLayout root;
+    /** The scene the preview on the right shows. */
+    private int previewScene;
     private final List<Row> rows = new ArrayList<>();
     private TextView status;
     private CloseOnScreensaver closer;
@@ -129,7 +132,7 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = Prefs.load(this);
 
-        LinearLayout root = new LinearLayout(this);
+        root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(Color.BLACK);
         root.setPadding(dp(32), dp(24), dp(32), dp(24));
@@ -184,6 +187,24 @@ public class SettingsActivity extends Activity {
                 cycleSecure("attentive_timeout", options, d);
             }
         });
+        // Scenes: every combination of the scene bits (1 = sand, 2 = ocean), both first.
+        addRow(list, new Row("Scenes") {
+            final int[] options = {3, 1, 2};
+            String value() {
+                if (prefs.scenes == 3) return "Sand + Ocean (random)";
+                return SceneView.NAMES[prefs.scenes == 2 ? 1 : 0] + " only";
+            }
+            void step(int d) {
+                int k = 0;
+                for (int i = 0; i < options.length; i++) if (options[i] == prefs.scenes) k = i;
+                prefs.scenes = options[wrap(k + d, options.length)];
+                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.pick(prefs));
+            }
+        });
+        addRow(list, new Row("Preview shows") {
+            String value() { return SceneView.NAMES[previewScene]; }
+            void step(int d) { showPreview(wrap(previewScene + d, SceneView.NAMES.length)); }
+        });
         addRow(list, new Row("Style") {
             String value() { return Prefs.STYLES[prefs.style]; }
             void step(int d) { prefs.style = wrap(prefs.style + d, Prefs.STYLES.length); }
@@ -192,17 +213,21 @@ public class SettingsActivity extends Activity {
             String value() { return prefs.style < 2 ? Prefs.BACKGROUND[prefs.background] : "— (black)"; }
             void step(int d) { prefs.background = wrap(prefs.background + d, Prefs.BACKGROUND.length); }
         });
-        addRow(list, new Row("Grains fall at") {
+        addRow(list, new Row("Sand: grains fall at") {
             String value() {
                 int v = prefs.dropPos;
+                if (v == Prefs.DROP_RANDOM) return "Random (new each day)";
                 return v + "%" + (v == 50 ? " (centre)" : v < 50 ? " (left)" : " (right)");
             }
             void step(int d) {
-                int span = GrainGrid.MAX_DROP - GrainGrid.MIN_DROP + 5;
-                prefs.dropPos = GrainGrid.MIN_DROP + wrap(prefs.dropPos - GrainGrid.MIN_DROP + 5 * d, span);
+                // 15 %, 20 %, ... 85 %, then Random.
+                int n = (GrainGrid.MAX_DROP - GrainGrid.MIN_DROP) / 5 + 1;
+                int i = prefs.dropPos == Prefs.DROP_RANDOM ? n : (prefs.dropPos - GrainGrid.MIN_DROP) / 5;
+                i = wrap(i + d, n + 1);
+                prefs.dropPos = i == n ? Prefs.DROP_RANDOM : GrainGrid.MIN_DROP + 5 * i;
             }
         });
-        addRow(list, new Row("Stream sway") {
+        addRow(list, new Row("Sand: stream sway") {
             String value() { return Prefs.SWAY[prefs.sway]; }
             void step(int d) { prefs.sway = wrap(prefs.sway + d, Prefs.SWAY.length); }
         });
@@ -218,7 +243,7 @@ public class SettingsActivity extends Activity {
             String value() { return prefs.use24h ? "24-hour" : "12-hour"; }
             void step(int d) { prefs.use24h = !prefs.use24h; }
         });
-        addRow(list, new Row("Falling sand") {
+        addRow(list, new Row("Animation") {
             String value() { return Prefs.ANIM[prefs.anim]; }
             void step(int d) {
                 int k = 0;
@@ -226,11 +251,11 @@ public class SettingsActivity extends Activity {
                 prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
             }
         });
-        addRow(list, new Row("Pour in at start") {
+        addRow(list, new Row("Pour / tide in at start") {
             String value() { return prefs.pourIn ? "On" : "Off"; }
             void step(int d) { prefs.pourIn = !prefs.pourIn; }
         });
-        addRow(list, new Row("Vacuum before midnight") {
+        addRow(list, new Row("Vacuum / whirlpool before midnight") {
             String value() { return Prefs.VACUUM[prefs.vacuum]; }
             void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
         });
@@ -307,7 +332,8 @@ public class SettingsActivity extends Activity {
         addAction(list, "Preview end of day (at 3× speed)", new Runnable() {
             public void run() {
                 startActivity(new Intent(SettingsActivity.this, ClockActivity.class)
-                        .putExtra(ClockActivity.EXTRA_DEMO_VACUUM, true));
+                        .putExtra(ClockActivity.EXTRA_DEMO_VACUUM, true)
+                        .putExtra(ClockActivity.EXTRA_SCENE, previewScene));
                 finish();
             }
         });
@@ -327,12 +353,8 @@ public class SettingsActivity extends Activity {
         hint.setPadding(dp(12), dp(12), 0, 0);
         list.addView(hint);
 
-        preview = new SandClockView(this);
-        preview.setPreviewMode(true);
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, -2, 0.58f);
-        plp.gravity = Gravity.CENTER_VERTICAL;
-        plp.leftMargin = dp(24);
-        root.addView(preview, plp);
+        previewScene = SceneView.pick(prefs);
+        preview = makePreview(previewScene);
 
         setContentView(root);
         closer = CloseOnScreensaver.register(this);
@@ -365,6 +387,27 @@ public class SettingsActivity extends Activity {
         if (closer != null) closer.unregister();
         try { unregisterReceiver(installStatus); } catch (IllegalArgumentException ignored) { }
         super.onDestroy();
+    }
+
+    private SceneView makePreview(int scene) {
+        SceneView v = SceneView.create(this, scene);
+        v.setPreviewMode(true);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(0, -2, 0.58f);
+        plp.gravity = Gravity.CENTER_VERTICAL;
+        plp.leftMargin = dp(24);
+        root.addView(v, plp);
+        return v;
+    }
+
+    /** Swaps the preview on the right to another scene. */
+    private void showPreview(int scene) {
+        if (scene == previewScene && preview != null) return;
+        previewScene = scene;
+        preview.stop();
+        root.removeView(preview);
+        preview = makePreview(scene);
+        preview.setPrefs(prefs);
+        preview.start();
     }
 
     private void addRow(LinearLayout list, final Row row) {

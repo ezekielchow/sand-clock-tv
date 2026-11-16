@@ -9,12 +9,10 @@ import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.view.View;
 
-import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
-import java.util.Date;
-import java.util.Locale;
+import java.util.Random;
 
 /**
  * The whole screen is the hourglass, drawn as chunky pixels like an old game. One grain falls
@@ -25,11 +23,7 @@ import java.util.Locale;
  * Power notes: only moving grains are simulated; the picture is a small bitmap scaled up
  * (no smoothing); black sand switches the mini-LED zones under it fully off.
  */
-public class SandClockView extends View {
-
-    interface Listener {
-        void onNightChanged(boolean night);
-    }
+public class SandClockView extends SceneView {
 
     private static final int GRAINS_PER_DAY = 86_400;
     /** Pour-in at start: the day's sand so far is released over this many ticks (3 s). */
@@ -54,19 +48,19 @@ public class SandClockView extends View {
     private GrainGrid grid;
     private float cell;
     private int dropX;
+    /** Random drop point: grain planStart[i] onwards falls at column planX[i] (null = fixed). */
+    private int[] planStart, planX;
     private int gridDay = -1;
     private int spawned;
     private long lastTickAt;
 
     // The clock as solid cells. On a minute change the old digits stop being solid for a moment
-    // (everything on them falls), then the new ones become solid.
-    /** One character of the clock text, as solid cells. Same id = same character in the same
-     *  place, so it keeps its sand when the minute changes. */
+    // (everything on them falls), then the new ones become solid. Same slot id = same character
+    // in the same place, so it keeps its sand when the minute changes.
     private static final class Slot {
         final String id;
-        final int[] cells;  // walls: solid
-        final int[] lids;   // open top edges: drawn, but sand passes through
-        Slot(String id, int[] cells, int[] lids) { this.id = id; this.cells = cells; this.lids = lids; }
+        final int[] cells, lids;
+        Slot(ClockText.Slot s) { id = s.id; cells = s.cells; lids = s.lids; }
     }
     /** Cells drawn as the letters' top edges (not solid). */
     private boolean[] lid = new boolean[0];
@@ -188,13 +182,16 @@ public class SandClockView extends View {
     // ---- the day's grid ----
 
     private void build(Calendar c, int w, int h) {
-        float frac = prefs.dropPos / 100f;
+        boolean random = prefs.dropPos == Prefs.DROP_RANDOM;
+        float frac = (random ? 50 : prefs.dropPos) / 100f;
         cell = Math.max(1, Math.round(h / (float) GRID_ROWS));
         int cols = (int) Math.ceil(w / cell), rows = (int) Math.ceil(h / cell);
         int day = dayKey(c);
-        grid = new GrainGrid(cols, rows, day, GrainGrid.slideFor(prefs.dropPos));
+        grid = new GrainGrid(cols, rows, day, GrainGrid.slideFor(random ? RANDOM_SLIDE_AT : prefs.dropPos));
         gridDay = day;
         dropX = Math.round(frac * (cols - 1));
+        if (random) planRandomDrops(day, cols);
+        else planStart = planX = null;
         draining = false;
         vacuumOn = false;
         shakeUntil = -1;
@@ -239,9 +236,47 @@ public class SandClockView extends View {
         return Prefs.SWAY_AMP[prefs.sway] * grid.cols * Math.max(0f, 1f - n / (float) GRAINS_PER_DAY);
     }
 
+    /** Random drop point: each spot lasts this many minutes (random in the range). */
+    private static final int RANDOM_MIN_MINUTES = 5, RANDOM_MAX_MINUTES = 40;
+    /** The next spot is at least this far (% of width) from the last, so the move shows. */
+    private static final int RANDOM_MIN_JUMP = 15;
+    /** Pile slope used for random drops (as if dropping here); spread-out sand holds a day. */
+    private static final int RANDOM_SLIDE_AT = 50;
+
+    /**
+     * Plans the day's random drop spots. Seeded by the date, so the screensaver rebuilds the
+     * same pile every time it starts today, and tomorrow gets a different plan.
+     */
+    private void planRandomDrops(int day, int cols) {
+        Random r = new Random(day * 7919L + 17);
+        int[] start = new int[GRAINS_PER_DAY / (RANDOM_MIN_MINUTES * 60) + 1];
+        int[] col = new int[start.length];
+        int n = 0, at = 0, last = -100;
+        int span = GrainGrid.MAX_DROP - GrainGrid.MIN_DROP;
+        while (at < GRAINS_PER_DAY) {
+            int pos;
+            do { pos = GrainGrid.MIN_DROP + r.nextInt(span + 1); }
+            while (Math.abs(pos - last) < RANDOM_MIN_JUMP);
+            last = pos;
+            start[n] = at;
+            col[n] = Math.round(pos / 100f * (cols - 1));
+            n++;
+            at += 60 * (RANDOM_MIN_MINUTES + r.nextInt(RANDOM_MAX_MINUTES - RANDOM_MIN_MINUTES + 1));
+        }
+        planStart = Arrays.copyOf(start, n);
+        planX = Arrays.copyOf(col, n);
+    }
+
+    /** Drop point of grain n before sway: fixed, or the random plan's spot at that time. */
+    private int baseColumn(int n) {
+        if (planStart == null) return dropX;
+        int i = Arrays.binarySearch(planStart, n);
+        return planX[i >= 0 ? i : -i - 2];
+    }
+
     /** Column grain n falls from: drifting back and forth around the drop point (3-minute swing). */
     private int dropColumn(int n) {
-        double x = dropX + swayAmp(n) * Math.sin(2 * Math.PI * n / 180.0);
+        double x = baseColumn(n) + swayAmp(n) * Math.sin(2 * Math.PI * n / 180.0);
         return Math.max(0, Math.min(grid.cols - 1, (int) Math.round(x)));
     }
 
@@ -445,26 +480,13 @@ public class SandClockView extends View {
      * forced, e.g. a colour change). Fills newSlots, the text layer and shownTime.
      */
     private void renderClock(Calendar c, boolean force) {
-        Date now = c.getTime();
-        String time = new SimpleDateFormat(prefs.use24h ? "HH:mm" : "h:mm", Locale.US).format(now);
-        String ampm = prefs.use24h ? "" : new SimpleDateFormat("a", Locale.US).format(now);
-        String date = new SimpleDateFormat("EEE d MMM", Locale.US).format(now).toUpperCase(Locale.US);
-        String key = time + ampm + date;
+        String key = ClockText.key(prefs, c);
         if (key.equals(shownTime) && !force) return;
         shownTime = key;
 
         int cols = grid.cols, rows = grid.rows;
-        int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));   // time: 8 on a TV
-        int sa = Math.max(1, st / 4);                                   // AM/PM
-        int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H)); // date
-        int mid = rows / 2;
-        int tw = PixelFont.width(time) * st;
-        int tLeft = (cols - tw) / 2, tTop = mid - PixelFont.H * st;
         java.util.List<Slot> slots = new java.util.ArrayList<>();
-        addSlots(slots, "t", time, tLeft, tTop, st);
-        if (!ampm.isEmpty()) addSlots(slots, "a", ampm, tLeft + tw + st, mid - PixelFont.H * sa, sa);
-        int dw = PixelFont.width(date) * sd;
-        addSlots(slots, "d", date, (cols - dw) / 2, mid + Math.round(rows * 0.06f), sd);
+        for (ClockText.Slot cs : ClockText.layout(prefs, c, cols, rows)) slots.add(new Slot(cs));
         newSlots = slots;
         int text = prefs.textColor(1f);
         textCol = text;
@@ -483,45 +505,6 @@ public class SandClockView extends View {
     private void markWallsAsLids(java.util.List<Slot> slots) {
         for (Slot sl : slots) for (int i : sl.cells) lid[i] = true;
         grid.markAll();
-    }
-
-    private void addSlots(java.util.List<Slot> out, String part, String s, int left, int top, int scale) {
-        int x = left;
-        for (int k = 0; k < s.length(); k++) {
-            char ch = s.charAt(k);
-            if (ch != ' ') {
-                int[][] wl = walls(PixelFont.cells(ch, x, top, scale, grid.cols, grid.rows));
-                out.add(new Slot(part + ch + "@" + x + "," + top + "," + scale, wl[0], wl[1]));
-            }
-            x += PixelFont.advance(ch, scale);
-        }
-    }
-
-    /**
-     * Turns a letter into a container: its outline becomes wall, except the upward-facing
-     * edges between corners, which are left open so sand can pour in and fill it.
-     */
-    private int[][] walls(int[] glyph) {
-        int cols = grid.cols, rows = grid.rows;
-        java.util.HashSet<Integer> in = new java.util.HashSet<>();
-        for (int i : glyph) in.add(i);
-        int[] out = new int[glyph.length];
-        int[] lids = new int[glyph.length];
-        int n = 0, m = 0;
-        for (int i : glyph) {
-            int x = i % cols, y = i / cols;
-            boolean up = y > 0 && in.contains(i - cols);
-            boolean down = y < rows - 1 && in.contains(i + cols);
-            boolean left = x > 0 && in.contains(i - 1);
-            boolean right = x < cols - 1 && in.contains(i + 1);
-            if (up && down && left && right) continue;   // inside: room for sand
-            if (!up && left && right) {                  // top edge: the opening
-                lids[m++] = i;
-                continue;
-            }
-            out[n++] = i;
-        }
-        return new int[][]{java.util.Arrays.copyOf(out, n), java.util.Arrays.copyOf(lids, m)};
     }
 
     // ---- drawing ----

@@ -5,6 +5,12 @@ second of the day (86,400 by midnight) and piles up on the floor. The clock's le
 containers: sand pours in and fills them, and when a character changes it lets its sand go. At
 midnight the floor opens and the screen empties.
 
+A second scene, **Ocean**, fills the screen with water instead: the sea rises over the day, a
+whale on the surface is the seconds hand (it crosses the screen each minute and spouts at :00),
+the letters fill once the water reaches their rim, changing digits dissolve into bubbles, digits
+that stay grow coral, and the animals change with depth. Settings → **Scenes** picks which scenes
+the screensaver chooses from at random each time it starts.
+
 ## Build
 
 ```bash

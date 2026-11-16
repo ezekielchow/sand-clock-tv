@@ -6,11 +6,13 @@ import android.view.View;
 import android.view.WindowManager;
 
 /** Runs the clock full screen and keeps the TV awake. Press Back to leave. */
-public class ClockActivity extends Activity implements SandClockView.Listener {
+public class ClockActivity extends Activity implements SceneView.Listener {
     /** Start with the end-of-day vacuum running (settings: "Preview end of day"). */
     static final String EXTRA_DEMO_VACUUM = "demoVacuum";
+    /** Which scene to show (default: one of the chosen scenes at random). */
+    static final String EXTRA_SCENE = "scene";
 
-    private SandClockView view;
+    private SceneView view;
     private Prefs prefs;
     private CloseOnScreensaver closer;
 
@@ -19,7 +21,7 @@ public class ClockActivity extends Activity implements SandClockView.Listener {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 | WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        view = new SandClockView(this);
+        view = SceneView.create(this, getIntent().getIntExtra(EXTRA_SCENE, SceneView.pick(Prefs.load(this))));
         view.setListener(this);
         setContentView(view);
         closer = CloseOnScreensaver.register(this);
