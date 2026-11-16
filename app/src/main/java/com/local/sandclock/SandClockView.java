@@ -567,6 +567,7 @@ public class SandClockView extends SceneView {
         noteHour = h;
         noteUntil = now + 12_000;
         String msg = stats().sandMessage(c, h);
+        if (msg == null) return; // nothing to tell yet
         int cols = grid.cols, rows = grid.rows;
         int sc = Math.max(1, Math.round(rows / 135f));
         int left = Math.max(0, (cols - PixelFont.width(msg) * sc) / 2);

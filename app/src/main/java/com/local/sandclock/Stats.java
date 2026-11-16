@@ -133,11 +133,13 @@ final class Stats {
     private void ensurePeriod(long day) {
         long p = periodOf(day);
         if (p == period) return;
-        if (period >= 0) {
+        if (period >= 0 && p == period + 1) {
             lastPLaps = pLaps;
             lastPGrains = pGrains;
             lastPOceanMs = pOceanMs;
             lastPSandMs = pSandMs;
+        } else {
+            lastPLaps = lastPGrains = -1; // nothing from the period just before: no look back
         }
         period = p;
         pOceanMs = pSandMs = pGrains = pLaps = 0;
@@ -214,8 +216,8 @@ final class Stats {
         return out;
     }
 
-    /** Fossils in the bedrock: one per 60,000 grains this period, at most one per sand day. */
-    int fossils() { return (int) Math.min(8, Math.min(pGrains / 60_000, pSandDays)); }
+    /** Fossils in the bedrock: one per 25,000 grains this period, at most one per sand day. */
+    int fossils() { return (int) Math.min(8, Math.min(pGrains / 25_000, pSandDays)); }
 
     /** Stars of the night constellation: one per 4 hours of sand, at most two per sand day. */
     int stars() { return (int) Math.min(12, Math.min(pSandMs / (4 * 3_600_000L), pSandDays * 2L)); }
@@ -234,31 +236,31 @@ final class Stats {
         return km < 10 ? String.format(Locale.US, "%.1f KM", km) : Math.round(km) + " KM";
     }
 
-    /** A line for the message in a bottle; `pick` chooses which (e.g. the hour). */
+    /** A line for the message in a bottle; `pick` chooses which (e.g. the hour). Null: nothing yet. */
     String oceanMessage(Calendar c, int pick) {
-        if (firstDayOfPeriod(c) && lastPLaps >= 0) return "LAST 2 WEEKS: " + km(lastPLaps);
+        if (firstDayOfPeriod(c) && lastPLaps > 0) return "LAST 2 WEEKS: " + km(lastPLaps);
         java.util.List<String> m = new java.util.ArrayList<>();
-        m.add("THE WHALE HAS SWUM " + km(laps));
+        if (laps > 0) m.add("THE WHALE HAS SWUM " + km(laps));
         if (spouts > 0) m.add(count(spouts) + " SPOUTS SO FAR");
         int best = -1;
         for (int i = 0; i < N_ANIMALS; i++) if (animals[i] > 0 && (best < 0 || animals[i] > animals[best])) best = i;
         if (best >= 0) m.add(count(animals[best]) + " " + ANIMALS[best] + " SEEN");
         if (animals[ANGLER] > 0) m.add("ANGLERFISH SEEN " + count(animals[ANGLER]) + "X");
         if (whirlpools > 0) m.add(count(whirlpools) + " WHIRLPOOLS");
-        m.add(hours(oceanMs) + " AT SEA");
-        return m.get(Math.abs(pick) % m.size());
+        if (oceanMs >= 60_000) m.add(hours(oceanMs) + " AT SEA");
+        return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
     }
 
-    /** A line for the sand sky; `pick` chooses which (e.g. the hour). */
+    /** A line for the sand sky; `pick` chooses which (e.g. the hour). Null: nothing yet. */
     String sandMessage(Calendar c, int pick) {
-        if (firstDayOfPeriod(c) && lastPGrains >= 0) return "LAST 2 WEEKS: " + count(lastPGrains) + " GRAINS";
+        if (firstDayOfPeriod(c) && lastPGrains > 0) return "LAST 2 WEEKS: " + count(lastPGrains) + " GRAINS";
         java.util.List<String> m = new java.util.ArrayList<>();
-        m.add(count(grains) + " GRAINS SO FAR");
-        m.add(hours(sandMs) + " OF SAND");
+        if (grains > 0) m.add(count(grains) + " GRAINS SO FAR");
+        if (sandMs >= 60_000) m.add(hours(sandMs) + " OF SAND");
         if (streak > 1) m.add("DAY " + streak + " IN A ROW");
         if (fullMoons > 0) m.add(fullMoons + (fullMoons == 1 ? " FULL MOON" : " FULL MOONS"));
         if (daysShown > 1) m.add(daysShown + " DAYS SHOWN");
-        return m.get(Math.abs(pick) % m.size());
+        return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
     }
 
     private static String hours(long ms) {

@@ -686,6 +686,12 @@ final class OceanScene {
         }
 
         int row = rowFor(levelFrac(c, t, vacuumAllowed));
+        // A whirlpool lasts minutes (or the 7 s drain), so it is counted as it starts: the
+        // once-a-minute night steps see it too.
+        if (whirl && !whirlCounted && demoStart < 0 && recording) {
+            whirlCounted = true;
+            stats.addWhirlpool();
+        }
         if (row != levelRow) {
             levelRow = row;
             updateFlooded();
@@ -779,10 +785,6 @@ final class OceanScene {
             whaleX = Math.round(whaleX + (whirlX - ww / 2 - whaleX) * p);
             wy = Math.round(wy + (whirlY - wh / 2 - wy) * p);
             whaleShown = left > 1000;
-            if (!whaleShown && !whirlCounted && demoStart < 0 && recording) {
-                whirlCounted = true;
-                stats.addWhirlpool();
-            }
         }
         whaleY = wy;
 
@@ -1033,8 +1035,9 @@ final class OceanScene {
         int h = c.get(Calendar.HOUR_OF_DAY), m = c.get(Calendar.MINUTE);
         if (bottleStart < 0 && h % 2 == 0 && m == 15 && c.get(Calendar.SECOND) < 30 && bottleHour != h) {
             bottleHour = h;
-            bottleStart = t;
             String msg = stats.oceanMessage(c, h / 2);
+            if (msg == null) return false; // nothing to tell yet
+            bottleStart = t;
             int sc = Math.max(1, unit);
             int w = PixelFont.width(msg) * sc;
             int top = Math.round(rows * 0.035f); // above the clock, clear of the digits
