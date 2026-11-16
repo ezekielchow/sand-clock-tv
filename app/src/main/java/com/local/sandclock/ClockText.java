@@ -56,13 +56,25 @@ final class ClockText {
         return out;
     }
 
+    /**
+     * The text placed elsewhere: the time's baseline at row `mid`, time and date at scales
+     * st and sd (the ant farm puts a smaller clock underground).
+     */
+    static List<Slot> layoutAt(Prefs prefs, Calendar c, int cols, int rows, int mid, int st, int sd) {
+        return layout(prefs, c, cols, rows, true, mid, st, sd);
+    }
+
     private static List<Slot> layout(Prefs prefs, Calendar c, int cols, int rows, boolean cells) {
+        int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));   // time: 8 on a TV
+        int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H)); // date
+        return layout(prefs, c, cols, rows, cells, rows / 2, st, sd);
+    }
+
+    private static List<Slot> layout(Prefs prefs, Calendar c, int cols, int rows, boolean cells,
+                                     int mid, int st, int sd) {
         String[] s = strings(prefs, c);
         String time = s[0], ampm = s[1], date = s[2];
-        int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));   // time: 8 on a TV
         int sa = Math.max(1, st / 4);                                   // AM/PM
-        int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H)); // date
-        int mid = rows / 2;
         int tw = PixelFont.width(time) * st;
         int tLeft = (cols - tw) / 2, tTop = mid - PixelFont.H * st;
         List<Slot> slots = new ArrayList<>();

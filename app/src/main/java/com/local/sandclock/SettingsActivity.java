@@ -152,12 +152,18 @@ public class SettingsActivity extends Activity {
         list.addView(status);
 
         addHeader(list, "Scenes");
-        // Scenes: every combination of the scene bits (1 = sand, 2 = ocean), both first.
+        // Scenes: every combination of the scene bits (1 ant farm, 2 ocean, 4 garden), all first.
         addRow(list, new Row("Scenes") {
-            final int[] options = {3, 1, 2};
+            final int[] options = {7, 3, 5, 6, 1, 2, 4};
             String value() {
-                if (prefs.scenes == 3) return "Sand + Ocean (random)";
-                return SceneView.NAMES[prefs.scenes == 2 ? 1 : 0] + " only";
+                StringBuilder b = new StringBuilder();
+                int n = 0;
+                for (int i = 0; i < SceneView.NAMES.length; i++) {
+                    if ((prefs.scenes & (1 << i)) == 0) continue;
+                    if (n++ > 0) b.append(" + ");
+                    b.append(SceneView.NAMES[i]);
+                }
+                return n == 1 ? b + " only" : b + " (one a day)";
             }
             void step(int d) {
                 int k = 0;
@@ -207,8 +213,8 @@ public class SettingsActivity extends Activity {
             }
             void step(int d) { prefs.city = wrap(prefs.city + d, Sun.CITIES.length); }
         });
-        addHeader(list, "Sand");
-        addRow(list, scene(SceneView.SAND, new Row("Grains fall at") {
+        addHeader(list, "Ant farm");
+        addRow(list, scene(SceneView.ANTS, new Row("Nest entrance") {
             String value() {
                 int v = prefs.dropPos;
                 if (v == Prefs.DROP_RANDOM) return "Random (new each day)";
@@ -222,23 +228,23 @@ public class SettingsActivity extends Activity {
                 prefs.dropPos = i == n ? Prefs.DROP_RANDOM : GrainGrid.MIN_DROP + 5 * i;
             }
         }));
-        addRow(list, scene(SceneView.SAND, new Row("Stream sway") {
+        addRow(list, scene(SceneView.ANTS, new Row("Anthill spread") {
             String value() { return Prefs.SWAY[prefs.sway]; }
             void step(int d) { prefs.sway = wrap(prefs.sway + d, Prefs.SWAY.length); }
         }));
-        addRow(list, scene(SceneView.SAND, new Row("Hour layers") {
+        addRow(list, scene(SceneView.ANTS, new Row("Hour layers in the hill") {
             String value() { return prefs.sandLayers ? "On" : "Off"; }
             void step(int d) { prefs.sandLayers = !prefs.sandLayers; }
         }));
-        addRow(list, scene(SceneView.SAND, new Row("Sun & moon") {
+        addRow(list, scene(SceneView.ANTS, new Row("Sun & moon") {
             String value() { return prefs.sunMoon ? "On" : "Off"; }
             void step(int d) { prefs.sunMoon = !prefs.sunMoon; }
         }));
-        addRow(list, scene(SceneView.SAND, new Row("Pour in at start") {
+        addRow(list, scene(SceneView.ANTS, new Row("Dig in at start") {
             String value() { return prefs.pourIn ? "On" : "Off"; }
             void step(int d) { prefs.pourIn = !prefs.pourIn; }
         }));
-        addRow(list, scene(SceneView.SAND, new Row("Vacuum before midnight") {
+        addRow(list, scene(SceneView.ANTS, new Row("Rain before midnight") {
             String value() { return Prefs.VACUUM[prefs.vacuum]; }
             void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
         }));
@@ -254,6 +260,19 @@ public class SettingsActivity extends Activity {
         addRow(list, scene(SceneView.OCEAN, new Row("Whirlpool before midnight") {
             String value() { return Prefs.VACUUM[prefs.whirlpool]; }
             void step(int d) { prefs.whirlpool = wrap(prefs.whirlpool + d, Prefs.VACUUM.length); }
+        }));
+        addHeader(list, "Garden");
+        addRow(list, scene(SceneView.GARDEN, new Row("Ladybug, bee & birds") {
+            String value() { return prefs.gardenCritters ? "On" : "Off (less power)"; }
+            void step(int d) { prefs.gardenCritters = !prefs.gardenCritters; }
+        }));
+        addRow(list, scene(SceneView.GARDEN, new Row("Grow in at start") {
+            String value() { return prefs.gardenGrowIn ? "On" : "Off"; }
+            void step(int d) { prefs.gardenGrowIn = !prefs.gardenGrowIn; }
+        }));
+        addRow(list, scene(SceneView.GARDEN, new Row("Autumn before midnight") {
+            String value() { return Prefs.VACUUM[prefs.gardenAutumn]; }
+            void step(int d) { prefs.gardenAutumn = wrap(prefs.gardenAutumn + d, Prefs.VACUUM.length); }
         }));
         addHeader(list, "Night");
         addRow(list, new Row("Night schedule") {

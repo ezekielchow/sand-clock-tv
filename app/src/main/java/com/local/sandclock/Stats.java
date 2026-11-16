@@ -20,6 +20,8 @@ final class Stats {
     /** Animals, in the order OceanScene spawns them. */
     static final int FISH = 0, TURTLE = 1, RAY = 2, JELLY = 3, ANGLER = 4, CRAB = 5, N_ANIMALS = 6;
     static final String[] ANIMALS = {"FISH SCHOOLS", "TURTLES", "RAYS", "JELLYFISH", "ANGLERFISH", "CRABS"};
+    /** Ant farm: one grain dug every this many seconds (see AntScene). */
+    static final int SECONDS_PER_GRAIN = 6;
     /** One lap across the screen, as distance swum (a whale is ~1/15 of the width: ~400 m). */
     private static final double KM_PER_LAP = 0.4;
     /** Hours of a scene in a period for its extras to be fully grown (about a week of use). */
@@ -31,8 +33,9 @@ final class Stats {
     private long lastSave;
     private boolean dirty;
 
-    // Lifetime.
+    // Lifetime. ("sand" is the ant farm: it was the sand clock, and keeps its counts.)
     long oceanMs, sandMs, grains, laps, spouts, whirlpools;
+    long gardenMs, bees, ladybugLaps, leaves;
     final long[] animals = new long[N_ANIMALS];
     int fullMoons, streak, bestStreak, daysShown;
     long lastDay = -1, lastMoonDay = -1;
@@ -40,6 +43,9 @@ final class Stats {
     // This period (two weeks).
     long period = -1;
     long pOceanMs, pSandMs, pGrains, pLaps;
+    long pGardenMs;
+    int pGardenDays;
+    long pLastGardenDay = -1;
     final int[] pAnimals = new int[N_ANIMALS];
     /** Animals in the order they earned a trophy this period (each digit an animal). */
     String pTrophies = "";
@@ -48,6 +54,7 @@ final class Stats {
 
     // The period before, for the look back on the first day of a new one.
     long lastPLaps = -1, lastPGrains = -1, lastPOceanMs, lastPSandMs;
+    long lastPBees = -1, pBees;
 
     private Stats(Context c) {
         sp = c.getApplicationContext().getSharedPreferences("sandclock_stats", Context.MODE_PRIVATE);
@@ -57,6 +64,15 @@ final class Stats {
         laps = sp.getLong("laps", 0);
         spouts = sp.getLong("spouts", 0);
         whirlpools = sp.getLong("whirlpools", 0);
+        gardenMs = sp.getLong("gardenMs", 0);
+        bees = sp.getLong("bees", 0);
+        ladybugLaps = sp.getLong("ladybugLaps", 0);
+        leaves = sp.getLong("leaves", 0);
+        pGardenMs = sp.getLong("pGardenMs", 0);
+        pGardenDays = sp.getInt("pGardenDays", 0);
+        pLastGardenDay = sp.getLong("pLastGardenDay", -1);
+        pBees = sp.getLong("pBees", 0);
+        lastPBees = sp.getLong("lastPBees", -1);
         for (int i = 0; i < N_ANIMALS; i++) {
             animals[i] = sp.getLong("animal" + i, 0);
             pAnimals[i] = sp.getInt("pAnimal" + i, 0);
@@ -92,7 +108,10 @@ final class Stats {
         if (!dirty) return;
         SharedPreferences.Editor e = sp.edit();
         e.putLong("oceanMs", oceanMs).putLong("sandMs", sandMs).putLong("grains", grains)
-                .putLong("laps", laps).putLong("spouts", spouts).putLong("whirlpools", whirlpools);
+                .putLong("laps", laps).putLong("spouts", spouts).putLong("whirlpools", whirlpools)
+                .putLong("gardenMs", gardenMs).putLong("bees", bees).putLong("ladybugLaps", ladybugLaps)
+                .putLong("leaves", leaves).putLong("pGardenMs", pGardenMs).putInt("pGardenDays", pGardenDays)
+                .putLong("pLastGardenDay", pLastGardenDay).putLong("pBees", pBees).putLong("lastPBees", lastPBees);
         for (int i = 0; i < N_ANIMALS; i++) {
             e.putLong("animal" + i, animals[i]).putInt("pAnimal" + i, pAnimals[i]);
         }
@@ -138,9 +157,13 @@ final class Stats {
             lastPGrains = pGrains;
             lastPOceanMs = pOceanMs;
             lastPSandMs = pSandMs;
+            lastPBees = pBees;
         } else {
-            lastPLaps = lastPGrains = -1; // nothing from the period just before: no look back
+            lastPLaps = lastPGrains = lastPBees = -1; // nothing from the period just before: no look back
         }
+        pGardenMs = pBees = 0;
+        pGardenDays = 0;
+        pLastGardenDay = -1;
         period = p;
         pOceanMs = pSandMs = pGrains = pLaps = 0;
         java.util.Arrays.fill(pAnimals, 0);
@@ -168,6 +191,10 @@ final class Stats {
             oceanMs += ms;
             pOceanMs += ms;
             if (pLastOceanDay != day) { pOceanDays++; pLastOceanDay = day; }
+        } else if (scene == SceneView.GARDEN) {
+            gardenMs += ms;
+            pGardenMs += ms;
+            if (pLastGardenDay != day) { pGardenDays++; pLastGardenDay = day; }
         } else {
             sandMs += ms;
             pSandMs += ms;
@@ -179,6 +206,10 @@ final class Stats {
     void addGrain() { grains++; pGrains++; dirty = true; }
     void addLap() { laps++; pLaps++; maybeSave(); }
     void addSpout() { spouts++; dirty = true; }
+    void addBee() { bees++; pBees++; dirty = true; }
+    void addLadybugLap() { ladybugLaps++; dirty = true; }
+    /** Garden: leaves grown (counted as the tree grows while the screensaver shows). */
+    void addLeaves(int n) { leaves += n; dirty = true; }
     void addWhirlpool() { whirlpools++; maybeSave(); }
 
     void sawAnimal(int kind) {
@@ -204,6 +235,16 @@ final class Stats {
 
     float oceanGrowth() { return Math.min(1f, pOceanMs / 3_600_000f / FULL_HOURS); }
     float sandGrowth() { return Math.min(1f, pSandMs / 3_600_000f / FULL_HOURS); }
+    float gardenGrowth() { return Math.min(1f, pGardenMs / 3_600_000f / FULL_HOURS); }
+    /** Garden extras by growth: a nest, then eggs, then chicks; mushrooms (0..6) at the roots. */
+    int gardenNestStage() {
+        float g = gardenGrowth();
+        if (pGardenDays < 2 || g < 0.2f) return 0;   // nothing yet
+        if (pGardenDays < 4 || g < 0.45f) return 1;  // a nest
+        if (pGardenDays < 6 || g < 0.75f) return 2;  // eggs
+        return 3;                                    // chicks
+    }
+    int mushrooms() { return (int) Math.min(6, Math.min(gardenGrowth() * 7, pGardenDays)); }
 
     /** The calf joins after 30 hours of sea, and not before the fourth sea day. */
     boolean hasCalf() { return pOceanMs >= 30 * 3_600_000L && pOceanDays >= 4; }
@@ -253,13 +294,25 @@ final class Stats {
 
     /** A line for the sand sky; `pick` chooses which (e.g. the hour). Null: nothing yet. */
     String sandMessage(Calendar c, int pick) {
-        if (firstDayOfPeriod(c) && lastPGrains > 0) return "LAST 2 WEEKS: " + count(lastPGrains) + " GRAINS";
+        if (firstDayOfPeriod(c) && lastPGrains > 0) return "LAST 2 WEEKS: " + count(lastPGrains) + " GRAINS DUG";
         java.util.List<String> m = new java.util.ArrayList<>();
-        if (grains > 0) m.add(count(grains) + " GRAINS SO FAR");
-        if (sandMs >= 60_000) m.add(hours(sandMs) + " OF SAND");
+        if (grains > 0) m.add(count(grains) + " GRAINS DUG");
+        if (sandMs >= 60_000) m.add(hours(sandMs) + " OF DIGGING");
         if (streak > 1) m.add("DAY " + streak + " IN A ROW");
         if (fullMoons > 0) m.add(fullMoons + (fullMoons == 1 ? " FULL MOON" : " FULL MOONS"));
         if (daysShown > 1) m.add(daysShown + " DAYS SHOWN");
+        return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
+    }
+
+    /** A line for the garden; `pick` chooses which (e.g. the hour). Null: nothing yet. */
+    String gardenMessage(Calendar c, int pick) {
+        if (firstDayOfPeriod(c) && lastPBees > 0) return "LAST 2 WEEKS: " + count(lastPBees) + " BEE VISITS";
+        java.util.List<String> m = new java.util.ArrayList<>();
+        if (bees > 0) m.add(count(bees) + " BEE VISITS");
+        if (leaves > 0) m.add(count(leaves) + " LEAVES GROWN");
+        if (ladybugLaps > 0) m.add("THE LADYBUG HAS CLIMBED " + count(ladybugLaps) + "X");
+        if (gardenMs >= 60_000) m.add(hours(gardenMs) + " IN THE GARDEN");
+        if (streak > 1) m.add("DAY " + streak + " IN A ROW");
         return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
     }
 

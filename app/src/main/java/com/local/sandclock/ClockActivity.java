@@ -24,7 +24,7 @@ public class ClockActivity extends Activity implements SceneView.Listener, Daily
                 | WindowManager.LayoutParams.FLAG_FULLSCREEN);
         int scene;
         if (getIntent().hasExtra(EXTRA_SCENE)) {
-            scene = getIntent().getIntExtra(EXTRA_SCENE, SceneView.SAND);
+            scene = getIntent().getIntExtra(EXTRA_SCENE, SceneView.ANTS);
         } else {
             scene = SceneView.today(Prefs.load(this));
             daily = new DailyScene(this, this, scene);

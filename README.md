@@ -1,15 +1,24 @@
 # Sand Clock (Android TV screensaver)
 
-Pixel-art sand clock for Android TV, built as a low-power screensaver. One grain falls every
-second of the day (86,400 by midnight) and piles up on the floor. The clock's letters are open-top
-containers: sand pours in and fills them, and when a character changes it lets its sand go. At
-midnight the floor opens and the screen empties.
+Pixel-art clock scenes for Android TV, built as a low-power screensaver. Each scene shows the
+time of day as something that fills up or grows, and resets at midnight:
 
-A second scene, **Ocean**, fills the screen with water instead: the sea rises over the day, a
-whale on the surface is the seconds hand (it crosses the screen each minute and spouts at :00),
-the letters fill once the water reaches their rim, changing digits dissolve into bubbles, digits
-that stay grow coral, and the animals change with depth. Settings → **Scenes** picks which scenes
-the screensaver chooses from at random each time it starts.
+- **Ant farm**: through the day the ants dig a new tunnel network (one grain every 6 s) and pile
+  the soil into an anthill on the surface, in hour-coloured layers. The clock is dug out
+  underground; an ant walking the surface is the seconds hand. Rain washes it away before
+  midnight.
+- **Ocean**: the sea rises over the day; a whale on the surface is the seconds hand (it crosses
+  the screen each minute and spouts at :00). Letters fill once the water reaches their rim,
+  changing digits dissolve into bubbles, digits that stay grow coral, and the animals change
+  with depth. A whirlpool drains it before midnight.
+- **Garden**: a tree grows from a seed to a full canopy over the day; flowers bloom on the
+  digits; a ladybug climbing a branch is the seconds hand and a bee visits at :00. Autumn
+  strips the tree before midnight.
+
+Settings → **Scenes** picks which scenes to use; one is shown per day, taking turns. While it
+is the screensaver, the app keeps lifetime stats (shown now and then in the scene) and grows
+extras that reset every two weeks (barnacles and a calf, a treasure chest, a queen's chamber,
+a bird's nest, fossils, a night constellation...).
 
 ## Build
 

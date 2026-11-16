@@ -41,11 +41,17 @@ final class Prefs {
     int whirlpool = 3;
     /** Ocean: fish, turtles, crabs... (off: only the whale moves). */
     boolean oceanAnimals = true;
+    /** Garden: minutes of autumn (leaves turn and fall) before midnight (index into VACUUM). */
+    int gardenAutumn = 3;
+    /** Garden: ladybug, bee, birds and fireflies (off: only the tree and flowers). */
+    boolean gardenCritters = true;
+    /** Garden: when the screensaver starts, the tree grows quickly to today's size. */
+    boolean gardenGrowIn = true;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black", "Dark", "Glowing"};
-    /** Scenes to pick from at random, bit per SceneView scene (1 = sand, 2 = ocean). */
-    int scenes = 3;
+    /** Scenes to pick from, a bit per SceneView scene (1 = ant farm, 2 = ocean, 4 = garden). */
+    int scenes = 7;
     int style = 0;
     /** Where grains fall from, % across the top of the screen, or DROP_RANDOM. */
     int dropPos = 50;
@@ -82,8 +88,11 @@ final class Prefs {
         SharedPreferences s = sp(c);
         Prefs p = new Prefs();
         p.style = clamp(s.getInt("style", 0), STYLES.length);
-        p.scenes = s.getInt("scenes", 3) & 3;
-        if (p.scenes == 0) p.scenes = 1;
+        // "scenes3" since the Garden: older saves get the Garden added to their choice.
+        int sc = s.getInt("scenes3", -1);
+        if (sc < 0) sc = (s.getInt("scenes", 3) & 3) | 4;
+        p.scenes = sc & 7;
+        if (p.scenes == 0) p.scenes = 7;
         // Outside 15..85 % the pile can't hold a full day before reaching the top.
         int dp = s.getInt("dropPos", 50);
         p.dropPos = dp == DROP_RANDOM ? DROP_RANDOM
@@ -98,6 +107,9 @@ final class Prefs {
         p.tideIn = s.getBoolean("tideIn", p.pourIn);
         p.whirlpool = clamp(s.getInt("whirlpool", p.vacuum), VACUUM.length);
         p.oceanAnimals = s.getBoolean("oceanAnimals", true);
+        p.gardenAutumn = clamp(s.getInt("gardenAutumn", 3), VACUUM.length);
+        p.gardenCritters = s.getBoolean("gardenCritters", true);
+        p.gardenGrowIn = s.getBoolean("gardenGrowIn", true);
         p.sandLayers = s.getBoolean("sandLayers", true);
         p.sunMoon = s.getBoolean("sunMoon", true);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
@@ -116,7 +128,7 @@ final class Prefs {
     void save(Context c) {
         sp(c).edit()
                 .putInt("style", style)
-                .putInt("scenes", scenes)
+                .putInt("scenes3", scenes)
                 .putInt("dropPos", dropPos)
                 .putInt("sway", sway)
                 .putInt("theme", theme)
@@ -128,6 +140,9 @@ final class Prefs {
                 .putBoolean("tideIn", tideIn)
                 .putInt("whirlpool", whirlpool)
                 .putBoolean("oceanAnimals", oceanAnimals)
+                .putInt("gardenAutumn", gardenAutumn)
+                .putBoolean("gardenCritters", gardenCritters)
+                .putBoolean("gardenGrowIn", gardenGrowIn)
                 .putBoolean("sandLayers", sandLayers)
                 .putBoolean("sunMoon", sunMoon)
                 .putBoolean("use24h", use24h)
@@ -143,7 +158,7 @@ final class Prefs {
                 .apply();
     }
 
-    static final int SCENE_COUNT = 2; // bits of `scenes`: SceneView.SAND, SceneView.OCEAN
+    static final int SCENE_COUNT = 3; // bits of `scenes`: SceneView.ANTS, OCEAN, GARDEN
 
     /**
      * Today's scene, from the ones chosen. Days go in blocks of as many days as there are

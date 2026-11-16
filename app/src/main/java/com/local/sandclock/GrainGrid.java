@@ -66,8 +66,8 @@ final class GrainGrid {
     private byte[][] pourLayers;    // per column, layers of the grains to rain, bottom first
     private int[] pourLayerNext;
 
-    /** Layer of the n-th grain of the day (grain n falls at second n). */
-    static byte layerOf(int n) { return (byte) (1 + Math.min(23, n / 3600)); }
+    /** Layer (hour, 1..24) of the n-th grain of the day (one every SECONDS_PER_GRAIN s). */
+    static byte layerOf(int n) { return (byte) (1 + Math.min(23, n * Stats.SECONDS_PER_GRAIN / 3600)); }
 
     /** Midnight: the bottom opens and the sand pours out. */
     boolean floorOpen;
@@ -132,6 +132,23 @@ final class GrainGrid {
     }
 
     void markAll() { allChanged = true; }
+
+    /**
+     * Rain washing the hill away: takes the top grain off column x (if any) and wakes what
+     * rests beside it, so the slopes slump. Returns true if a grain was removed.
+     */
+    boolean removeTop(int x) {
+        int y = freeDepth(x);
+        if (y >= rows || c[y * cols + x] != SAND) return false;
+        int i = y * cols + x;
+        c[i] = EMPTY;
+        vy[i] = 0;
+        sandCount--;
+        mark(i);
+        wakeAround(x, y);
+        wake(x, y + 1);
+        return true;
+    }
 
     /** Redraw this cell (something drawn over the sky changed). */
     void markCell(int i) { mark(i); }
