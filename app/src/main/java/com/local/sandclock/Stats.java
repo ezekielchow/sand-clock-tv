@@ -36,6 +36,7 @@ final class Stats {
     // Lifetime. ("sand" is the ant farm: it was the sand clock, and keeps its counts.)
     long oceanMs, sandMs, grains, laps, spouts, whirlpools;
     long gardenMs, bees, ladybugLaps, leaves;
+    long kampungMs, buildings, biawaks, trains;
     final long[] animals = new long[N_ANIMALS];
     int fullMoons, streak, bestStreak, daysShown;
     long lastDay = -1, lastMoonDay = -1;
@@ -46,6 +47,9 @@ final class Stats {
     long pGardenMs;
     int pGardenDays;
     long pLastGardenDay = -1;
+    long pKampungMs, pBuildings;
+    int pKampungDays;
+    long pLastKampungDay = -1;
     final int[] pAnimals = new int[N_ANIMALS];
     /** Animals in the order they earned a trophy this period (each digit an animal). */
     String pTrophies = "";
@@ -55,6 +59,7 @@ final class Stats {
     // The period before, for the look back on the first day of a new one.
     long lastPLaps = -1, lastPGrains = -1, lastPOceanMs, lastPSandMs;
     long lastPBees = -1, pBees;
+    long lastPBuildings = -1;
 
     private Stats(Context c) {
         sp = c.getApplicationContext().getSharedPreferences("sandclock_stats", Context.MODE_PRIVATE);
@@ -73,6 +78,15 @@ final class Stats {
         pLastGardenDay = sp.getLong("pLastGardenDay", -1);
         pBees = sp.getLong("pBees", 0);
         lastPBees = sp.getLong("lastPBees", -1);
+        kampungMs = sp.getLong("kampungMs", 0);
+        buildings = sp.getLong("buildings", 0);
+        biawaks = sp.getLong("biawaks", 0);
+        trains = sp.getLong("trains", 0);
+        pKampungMs = sp.getLong("pKampungMs", 0);
+        pBuildings = sp.getLong("pBuildings", 0);
+        pKampungDays = sp.getInt("pKampungDays", 0);
+        pLastKampungDay = sp.getLong("pLastKampungDay", -1);
+        lastPBuildings = sp.getLong("lastPBuildings", -1);
         for (int i = 0; i < N_ANIMALS; i++) {
             animals[i] = sp.getLong("animal" + i, 0);
             pAnimals[i] = sp.getInt("pAnimal" + i, 0);
@@ -111,7 +125,11 @@ final class Stats {
                 .putLong("laps", laps).putLong("spouts", spouts).putLong("whirlpools", whirlpools)
                 .putLong("gardenMs", gardenMs).putLong("bees", bees).putLong("ladybugLaps", ladybugLaps)
                 .putLong("leaves", leaves).putLong("pGardenMs", pGardenMs).putInt("pGardenDays", pGardenDays)
-                .putLong("pLastGardenDay", pLastGardenDay).putLong("pBees", pBees).putLong("lastPBees", lastPBees);
+                .putLong("pLastGardenDay", pLastGardenDay).putLong("pBees", pBees).putLong("lastPBees", lastPBees)
+                .putLong("kampungMs", kampungMs).putLong("buildings", buildings).putLong("biawaks", biawaks)
+                .putLong("trains", trains).putLong("pKampungMs", pKampungMs).putLong("pBuildings", pBuildings)
+                .putInt("pKampungDays", pKampungDays).putLong("pLastKampungDay", pLastKampungDay)
+                .putLong("lastPBuildings", lastPBuildings);
         for (int i = 0; i < N_ANIMALS; i++) {
             e.putLong("animal" + i, animals[i]).putInt("pAnimal" + i, pAnimals[i]);
         }
@@ -158,9 +176,13 @@ final class Stats {
             lastPOceanMs = pOceanMs;
             lastPSandMs = pSandMs;
             lastPBees = pBees;
+            lastPBuildings = pBuildings;
         } else {
-            lastPLaps = lastPGrains = lastPBees = -1; // nothing from the period just before: no look back
+            lastPLaps = lastPGrains = lastPBees = lastPBuildings = -1; // nothing just before: no look back
         }
+        pKampungMs = pBuildings = 0;
+        pKampungDays = 0;
+        pLastKampungDay = -1;
         pGardenMs = pBees = 0;
         pGardenDays = 0;
         pLastGardenDay = -1;
@@ -191,6 +213,10 @@ final class Stats {
             oceanMs += ms;
             pOceanMs += ms;
             if (pLastOceanDay != day) { pOceanDays++; pLastOceanDay = day; }
+        } else if (scene == SceneView.KAMPUNG) {
+            kampungMs += ms;
+            pKampungMs += ms;
+            if (pLastKampungDay != day) { pKampungDays++; pLastKampungDay = day; }
         } else if (scene == SceneView.GARDEN) {
             gardenMs += ms;
             pGardenMs += ms;
@@ -207,6 +233,10 @@ final class Stats {
     void addLap() { laps++; pLaps++; maybeSave(); }
     void addSpout() { spouts++; dirty = true; }
     void addBee() { bees++; pBees++; dirty = true; }
+    /** Kampung: a building finished while the screensaver shows. */
+    void addBuilding() { buildings++; pBuildings++; dirty = true; }
+    void addBiawak() { biawaks++; maybeSave(); }
+    void addTrain() { trains++; dirty = true; }
     void addLadybugLap() { ladybugLaps++; dirty = true; }
     /** Garden: leaves grown (counted as the tree grows while the screensaver shows). */
     void addLeaves(int n) { leaves += n; dirty = true; }
@@ -236,6 +266,9 @@ final class Stats {
     float oceanGrowth() { return Math.min(1f, pOceanMs / 3_600_000f / FULL_HOURS); }
     float sandGrowth() { return Math.min(1f, pSandMs / 3_600_000f / FULL_HOURS); }
     float gardenGrowth() { return Math.min(1f, pGardenMs / 3_600_000f / FULL_HOURS); }
+    /** Kampung extras grow over the two weeks (a park, a stadium, the monorail...). */
+    float kampungGrowth() { return Math.min(1f, pKampungMs / 3_600_000f / FULL_HOURS); }
+    int kampungDays() { return pKampungDays; }
     /** Garden extras by growth: a nest, then eggs, then chicks; mushrooms (0..6) at the roots. */
     int gardenNestStage() {
         float g = gardenGrowth();
@@ -312,6 +345,18 @@ final class Stats {
         if (leaves > 0) m.add(count(leaves) + " LEAVES GROWN");
         if (ladybugLaps > 0) m.add("THE LADYBUG HAS CLIMBED " + count(ladybugLaps) + "X");
         if (gardenMs >= 60_000) m.add(hours(gardenMs) + " IN THE GARDEN");
+        if (streak > 1) m.add("DAY " + streak + " IN A ROW");
+        return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
+    }
+
+    /** A line for the kampung's banner plane; `pick` chooses which. Null: nothing yet. */
+    String kampungMessage(Calendar c, int pick) {
+        if (firstDayOfPeriod(c) && lastPBuildings > 0) return "LAST 2 WEEKS: " + count(lastPBuildings) + " BUILDINGS";
+        java.util.List<String> m = new java.util.ArrayList<>();
+        if (buildings > 0) m.add(count(buildings) + " BUILDINGS BUILT");
+        if (biawaks > 0) m.add("THE BIAWAK HAS COME " + count(biawaks) + (biawaks == 1 ? " TIME" : " TIMES"));
+        if (trains > 0) m.add(count(trains) + " TRAINS PASSED");
+        if (kampungMs >= 60_000) m.add(hours(kampungMs) + " IN THE KAMPUNG");
         if (streak > 1) m.add("DAY " + streak + " IN A ROW");
         return m.isEmpty() ? null : m.get(Math.abs(pick) % m.size());
     }

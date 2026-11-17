@@ -39,6 +39,7 @@ public class OceanClockView extends SceneView {
     private OceanScene scene;
     private Bitmap picture, textLayer;
     private float cell;
+    private int lastNightMinute = -1;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -177,6 +178,10 @@ public class OceanClockView extends SceneView {
         }
         boolean animate = prefs.anim != Prefs.ANIM_OFF && !isNight();
         countTime(OCEAN, c, isNight());
+        // At night only the dim clock (and twinkling plankton) shows: the sea itself needs
+        // updating just once a minute.
+        if (isNight() && minute == lastNightMinute && !scene.busy()) return;
+        lastNightMinute = isNight() ? minute : -1;
         scene.setStats(stats(), recording && !previewMode);
         scene.update(c, t, animate, !previewMode && reset);
         upload();

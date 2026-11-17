@@ -217,7 +217,8 @@ public class AntClockView extends SceneView {
         } else if (prefs.anim == Prefs.ANIM_OFF) {
             delay = 1000 - now % 1000 + 5; // the surface ant ticks once a second
         } else if (scene.busy()) {
-            delay = frameMs();
+            // Rain, the flood and the dig-in look the same at ~12 fps: no need for more.
+            delay = Math.max(frameMs(), 80);
         } else {
             // Only the ants move, under three cells a second: 4 fps is enough.
             delay = Math.max(frameMs(), 250);

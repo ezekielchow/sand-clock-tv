@@ -10,8 +10,8 @@ abstract class SceneView extends View {
     }
 
     /** Scene ids (bit positions in Prefs.scenes). Id 0 was the sand clock; it is now the ant farm. */
-    static final int ANTS = 0, OCEAN = 1, GARDEN = 2;
-    static final String[] NAMES = {"Ant farm", "Ocean", "Garden"};
+    static final int ANTS = 0, OCEAN = 1, GARDEN = 2, KAMPUNG = 3;
+    static final String[] NAMES = {"Ant farm", "Ocean", "Garden", "Kampung"};
 
     SceneView(Context c) { super(c); }
 
@@ -48,6 +48,7 @@ abstract class SceneView extends View {
     static SceneView create(Context c, int scene) {
         if (scene == OCEAN) return new OceanClockView(c);
         if (scene == GARDEN) return new GardenClockView(c);
+        if (scene == KAMPUNG) return new KampungClockView(c);
         return new AntClockView(c);
     }
 

@@ -103,7 +103,8 @@ final class OceanScene {
     // Message in a bottle: drifts along the surface every two hours; its line shows mid-way.
     private long bottleStart = -1;
     private int bottleHour = -1;
-    private int[] noteCells = new int[0];
+    private int[][] noteChars = new int[0][]; // the bottle's line, per letter (types in and out)
+    private int lastNoteVis;
     private int noteX0, noteY0, noteW, noteH;
     private static final int BOTTLE_MS = 90_000;
 
@@ -137,6 +138,7 @@ final class OceanScene {
         innerSlot = new int[cols * rows];
         coral = new byte[cols * rows];
         extra = new byte[cols * rows];
+        skyCol = new int[cols * rows];
         bedTop = new int[cols];
         rnd = new Random(day * 31L + System.nanoTime());
         Random r = new Random(day * 7919L + 3);
@@ -210,17 +212,38 @@ final class OceanScene {
     private final int[] water = new int[RAMP], rays = new int[RAMP];
     private int colorKey = Integer.MIN_VALUE;
 
+    private float dayLight = 1f;               // 0 night .. 1 day (SunMoon.daylight)
+    private final int[] skyCol;                // sun or moon over the sky (0 = none)
+    private int[] skyCells = new int[0], skyColors = new int[0];
+    private int nSky, skyKey = Integer.MIN_VALUE;
+
+    /** The sun or moon above the water: its arc ends at the sea's surface. */
+    private boolean updateSky(Calendar c) {
+        int key = minuteOfDay(c) * 1000 + levelRow + colorKey * 31;
+        if (key == skyKey) return false;
+        skyKey = key;
+        for (int k = 0; k < nSky; k++) skyCol[skyCells[k]] = 0;
+        int max = SunMoon.maxCells(rows);
+        if (skyCells.length < max) { skyCells = new int[max]; skyColors = new int[max]; }
+        int horizon = levelRow - 2, top = Math.round(rows * 0.08f);
+        nSky = horizon - top > 2 * Math.round(rows * 0.026f) + 2
+                ? SunMoon.draw(prefs, c, cols, rows, horizon, top, skyCells, skyColors) : 0;
+        for (int k = 0; k < nSky; k++) skyCol[skyCells[k]] = skyColors[k];
+        return true;
+    }
+
     private boolean updateColors() {
         int key = prefs.background * 100000 + prefs.style * 10000 + prefs.theme * 1000
-                + prefs.brightness * 100 + Math.round(prefs.warmth * 20);
+                + prefs.brightness * 100 + Math.round(prefs.warmth * 20) + Math.round(dayLight * 10) * 1000000;
         if (key == colorKey) return false;
         colorKey = key;
         int st = prefs.style;
-        float wf = st == 0 ? 0f : st == 1 ? 0.22f : 1f;   // water: black, near-black, lit
+        // Day and night: the sea darkens after sunset and the sky turns to night.
+        float wf = (st == 0 ? 0f : st == 1 ? 0.22f : 1f) * (0.4f + 0.6f * dayLight);
         float sf = st < 2 ? Prefs.BACKGROUND_F[prefs.background] : 0f; // air above it
         float bf = st == 0 ? 0.55f : st == 1 ? 0.7f : 1f;  // seabed and kelp
         pal[0] = 0xFF000000;
-        pal[SKY] = sf > 0 ? prefs.color(0x5E88B4, sf) : 0xFF000000;
+        pal[SKY] = sf > 0 ? prefs.color(mix(0x0E1428, 0x5E88B4, dayLight) & 0xFFFFFF, sf) : 0xFF000000;
         pal[FOAM] = prefs.color(0xCFEFFF, 0.8f);
         pal[SAND0] = prefs.color(0x9A8058, bf);
         pal[SAND0 + 1] = prefs.color(0x8A7250, bf);
@@ -305,14 +328,14 @@ final class OceanScene {
         if (coral[i] != 0 && wet) return pal[coral[i]];
         int s = innerSlot[i];
         if (s >= 0) wet = flooded[s];
-        if (!wet) return pal[SKY];
+        if (!wet) return skyCol[i] != 0 ? skyCol[i] : pal[SKY];
         if (y == surf) return pal[FOAM];
         // Measured from the level, not the wave, so only the rows near the surface depend on
         // the wave (the crossfade covers them) and the deep water never goes out of step.
         int dy = Math.max(0, y - levelRow);
         int k = Math.min(RAMP - 1, dy * RAMP / Math.max(1, floorRow - topRow));
         // Daylight rays: slanted bands that fade out with depth (dithered).
-        if (prefs.style == 2 && dy < rows / 3) {
+        if (prefs.style == 2 && dayLight > 0.5f && dy < rows / 3) {
             int t = x + dy / 2;
             if (t % 53 < 7 && ((h >>> 24) & 0xFF) > dy * 255 * 3 / rows) return rays[k];
         }
@@ -478,12 +501,17 @@ final class OceanScene {
         for (String id : alive) born.put(id, wall - 60 * 60_000L);
     }
 
+    private long bornAt(String id, long fallback) {
+        Long b = born.get(id);
+        return b != null ? b : fallback;
+    }
+
     /** Coral on characters that stay: full after an hour (the date: over the whole day). */
     private void growCoral(Calendar c, long wall) {
         java.util.Arrays.fill(coral, (byte) 0);
         for (ClockText.Slot s : slots) {
             float f = s.part == 'd' ? minuteOfDay(c) / 1440f
-                    : Math.min(1f, (wall - born.getOrDefault(s.id, wall)) / 3_600_000f);
+                    : Math.min(1f, (wall - bornAt(s.id, wall)) / 3_600_000f);
             if (f <= 0) continue;
             int seed = s.id.hashCode();
             for (int i : s.cells) {
@@ -669,6 +697,10 @@ final class OceanScene {
      * animate = false: no animals, bubbles or sway; just the whale and the water.
      */
     void update(Calendar c, long t, boolean animate, boolean vacuumAllowed) {
+        dayLight = SunMoon.daylight(prefs, c);
+        fest = Festivals.of(prefs, c);
+        festSteps = fest == Festivals.NONE || minuteOfDay(c) < 420 ? 0 : Math.min(6, (minuteOfDay(c) - 420) / 15 + 1);
+        dark = !SunMoon.isDay(prefs, c);
         boolean recompose = updateColors();
         long wall = c.getTimeInMillis();
         int minute = minuteOfDay(c);
@@ -677,7 +709,7 @@ final class OceanScene {
 
         String key = ClockText.key(prefs, c);
         if (!key.equals(shownKey)) {
-            layoutText(c, wall, shownKey.isEmpty() || gap || !animate);
+            layoutText(c, wall, shownKey.isEmpty() || gap);
             shownKey = key;
             recompose = true;
         } else if (minute != lastMinute) {
@@ -724,6 +756,7 @@ final class OceanScene {
             lastExtrasMinute = minute;
             if (buildExtras(c)) recompose = true;
         }
+        if (updateSky(c)) recompose = true;
         if (recompose) composeAll(fadeStart >= 0 ? oldWave : wave);
 
         // Wave lines: the old ones fade out as the new ones fade in.
@@ -820,7 +853,7 @@ final class OceanScene {
             if (m.school > 0) addCur(x - (m.dir > 0 ? 26 * unit : 0), y - 10 * unit, w + 28 * unit, h + 20 * unit);
             else addCur(x, y, w, h);
         }
-        if (whaleShown) addCur(whaleX, whaleY, ww, wh);
+        if (whaleShown) addCur(whaleX, whaleY - (fest == Festivals.XMAS ? 4 * unit : 0), ww, wh + (fest == Festivals.XMAS ? 4 * unit : 0));
         boolean calf = whaleShown && stats != null && stats.hasCalf();
         int calfX = 0, calfY = 0, cw = WHALE.w * calfUnit(), ch = WHALE.h * calfUnit();
         if (calf) {
@@ -839,7 +872,9 @@ final class OceanScene {
             addCur(bottleX, bottleY, BOTTLE.w * unit, BOTTLE.h * unit);
         }
         // The line's area is restored for one more frame after it goes, to erase it.
-        if (bottle || noteShown) addCur(noteX0, noteY0, noteW, noteH);
+        int noteVis = note ? TypedLine.visible(noteChars.length, t - bottleStart - BOTTLE_MS / 4, BOTTLE_MS / 2) : 0;
+        if (noteVis != lastNoteVis) addCur(noteX0, noteY0, noteW, noteH);
+        lastNoteVis = noteVis;
         noteShown = note;
         if (nP > 0) {
             int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
@@ -858,7 +893,7 @@ final class OceanScene {
         if (fullDirty) {
             System.arraycopy(base, 0, px, 0, px.length);
         } else {
-            restore(prev, nPrev);
+            restorePrev();
             restore(cur, nCur);
         }
 
@@ -874,7 +909,7 @@ final class OceanScene {
             int y = m.y + m.bob(t, unit);
             Sprite sp = m.frames[(int) (((t - m.born) / m.strokeMs) % m.frames.length)];
             if (m.school > 0) {
-                int[][] off = {{0, 0}, {-11, -6}, {-9, 6}, {-22, 1}, {-19, -8}};
+                int[][] off = SCHOOL;
                 // Each fish of the school drifts a little on its own and beats out of step.
                 for (int k = 0; k < off.length; k++) {
                     int[] o = off[k];
@@ -892,22 +927,44 @@ final class OceanScene {
             if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
             px[y * cols + x] = pal[pKind[k] == P_BUBBLE ? BUBBLE : FOAM];
         }
+        drawFloats();
         if (calf) drawSprite(WHALE, calfX, calfY, !whaleRight, false, false, calfUnit());
         if (whaleShown) {
             drawSprite(WHALE, whaleX, whaleY, !whaleRight, false, false);
             drawBarnacles();
+            if (fest == Festivals.XMAS) drawHat();
         }
         if (bottle) drawSprite(BOTTLE, bottleX, bottleY, false, false, false);
-        if (note) for (int i : noteCells) px[i] = pal[NOTE];
+        for (int k = 0; k < noteVis; k++) for (int i : noteChars[k]) px[i] = pal[NOTE];
 
         // Hand the changed rectangles to the view.
         nDirty = 0;
         if (!fullDirty) {
-            for (int k = 0; k < nPrev && nDirty < dirty.length; k++) dirty[nDirty++] = prev[k];
+            for (int k = 0; k + 3 < nPrev && nDirty + 4 <= dirty.length; k += 4) {
+                if (inCur(prev[k], prev[k + 1], prev[k + 2], prev[k + 3])) continue;
+                for (int j = 0; j < 4; j++) dirty[nDirty++] = prev[k + j];
+            }
             for (int k = 0; k < nCur && nDirty < dirty.length; k++) dirty[nDirty++] = cur[k];
         }
         int[] tmp = prev; prev = cur; cur = tmp;
         nPrev = nCur; nCur = 0;
+    }
+
+    /** True if (x, y, w, h) lies inside one of this frame's rectangles (no need to redo it). */
+    private boolean inCur(int x, int y, int w, int h) {
+        for (int k = 0; k + 3 < nCur; k += 4) {
+            if (x >= cur[k] && y >= cur[k + 1] && x + w <= cur[k] + cur[k + 2] && y + h <= cur[k + 1] + cur[k + 3]) return true;
+        }
+        return false;
+    }
+
+    /** Restores last frame's rectangles, skipping those this frame redoes anyway. */
+    private void restorePrev() {
+        for (int k = 0; k + 3 < nPrev; k += 4) {
+            int x = prev[k], y = prev[k + 1], w = prev[k + 2], h = prev[k + 3];
+            if (inCur(x, y, w, h)) continue;
+            for (int yy = y; yy < y + h; yy++) System.arraycopy(base, yy * cols + x, px, yy * cols + x, w);
+        }
     }
 
     private void restore(int[] r, int n) {
@@ -973,6 +1030,61 @@ final class OceanScene {
 
     private boolean noteShown;
 
+    private int fest, festSteps;
+    private boolean dark;
+
+    /** Christmas: the whale wears a red hat with a white trim. */
+    private void drawHat() {
+        int red = pal[C_BODY], white = pal[FOAM];
+        String[] hat = {"...R.W", "..RRR.", ".RRRR.", "WWWWWW"};
+        int hx = whaleRight ? 17 : WHALE.w - 1 - 17 - 5; // over the head, which leads
+        for (int y = 0; y < hat.length; y++) for (int x = 0; x < 6; x++) {
+            char ch = hat[y].charAt(whaleRight ? x : 5 - x);
+            if (ch == '.') continue;
+            for (int a = 0; a < unit; a++) for (int b = 0; b < unit; b++) {
+                int X = whaleX + (hx + x) * unit + b, Y = whaleY + (y - 2) * unit + a;
+                if (X >= 0 && Y >= 0 && X < cols && Y < rows) px[Y * cols + X] = ch == 'R' ? red : white;
+            }
+        }
+    }
+
+    /**
+     * Festival days: a few things float on the water, set out one at a time through the
+     * morning (lanterns for CNY, lamps lit after dark for Raya and Deepavali, a flag buoy for
+     * Merdeka and Malaysia Day). Drawn every frame over the restored areas; they only move when
+     * the surface does (once a minute, a full redraw).
+     */
+    private void drawFloats() {
+        if (festSteps == 0 || fest == Festivals.XMAS || fest == Festivals.NEWYEAR || whirl) return;
+        int red = pal[C_BODY], gold = pal[LOCK], flame = pal[A_LURE], wood = pal[WOOD], white = pal[FOAM], blue = pal[W_BODY];
+        for (int k = 0; k < festSteps; k++) {
+            int x = Math.round(cols * (0.1f + 0.15f * k)) + (k % 2) * 3 * unit;
+            if (fest == Festivals.MERDEKA || fest == Festivals.MSIA) x = Math.round(cols * 0.62f); // clear of the whale's turns
+            int y = surfAt(x) - 2 * unit;
+            if (fest == Festivals.CNY) {
+                block(x, y - 2 * unit, red); block(x + unit, y - 2 * unit, red);
+                block(x, y - unit, gold); block(x + unit, y - unit, red);
+                block(x, y, red); block(x + unit, y, red);
+            } else if (fest == Festivals.RAYA || fest == Festivals.DEEPAVALI) {
+                block(x - unit, y + unit, wood); block(x, y + unit, wood); block(x + unit, y + unit, wood);
+                if (dark) block(x, y, flame);
+            } else if (k == 0) { // Merdeka / Malaysia Day: one buoy with a flag
+                block(x, y + unit, red); block(x, y, white);
+                for (int h = 1; h <= 4; h++) block(x, y - h * unit, white);
+                for (int fy = 0; fy < 3; fy++) for (int fx = 0; fx < 4; fx++) {
+                    block(x + (fx + 1) * unit, y - (4 - fy) * unit, fx < 2 && fy < 2 ? blue : fy % 2 == 0 ? red : white);
+                }
+            }
+        }
+    }
+
+    private void block(int x, int y, int col) {
+        for (int a = 0; a < unit; a++) for (int b = 0; b < unit; b++) {
+            int X = x + b, Y = y + a;
+            if (X >= 0 && Y >= 0 && X < cols && Y < rows) px[Y * cols + X] = col;
+        }
+    }
+
     /** Barnacles on the whale's back: more the longer it has swum these two weeks. */
     private void drawBarnacles() {
         if (stats == null) return;
@@ -995,7 +1107,10 @@ final class OceanScene {
         float g = stats.oceanGrowth();
         int coins = Math.round(g * 20);
         int[] tro = stats.trophies();
-        long key = stats.period * 10_000 + (g > 0 ? 1000 : 0) + coins * 10 + tro.length;
+        int wreckRows = g < 0.08f ? 0 : Math.min(WRECK.h, Math.round((g - 0.08f) / 0.3f * WRECK.h) + 1);
+        int wreckCoral = Math.round(Math.max(0f, g - 0.4f) / 0.6f * 28);
+        long key = stats.period * 10_000 + (g > 0 ? 1000 : 0) + coins * 10 + tro.length
+                + wreckRows * 100_000_000L + wreckCoral * 10_000_000_000L;
         if (key == extrasKey) return false;
         extrasKey = key;
         java.util.Arrays.fill(extra, (byte) 0);
@@ -1015,11 +1130,38 @@ final class OceanScene {
                 }
             }
         }
+        // The wreck: on the other side from the chest, its hull showing more as the sand shifts.
+        int wreckX = -1;
+        if (wreckRows > 0) {
+            int wx = cx < cols / 2 ? Math.round(cols * 0.66f) : Math.round(cols * 0.12f);
+            wreckX = wx;
+            int base = bedTop[Math.max(0, Math.min(cols - 1, wx + WRECK.w * unit / 2))];
+            int y0 = base - wreckRows * unit;
+            for (int sy = 0; sy < wreckRows * unit; sy++) for (int sx = 0; sx < WRECK.w * unit; sx++) {
+                int pi = WRECK.at(sx / unit, sy / unit, false);
+                if (pi >= 0) fillPx(wx + sx, y0 + sy, pi);
+            }
+            // Coral on its top edges, more as the two weeks go on.
+            Random cr = new Random(stats.period * 31 + 9);
+            for (int k = 0; k < wreckCoral; k++) {
+                int sx = cr.nextInt(WRECK.w * unit), x = wx + sx;
+                for (int y = y0; y < base; y++) {
+                    int i = y * cols + x;
+                    if (x >= 0 && x < cols && y >= 0 && extra[i] != 0) {
+                        if (y > 0) extra[i - cols] = (byte) (CORAL0 + k % 3);
+                        break;
+                    }
+                }
+            }
+        }
         // Trophies in a row along the seabed, kept clear of the chest.
         for (int k = 0; k < tro.length; k++) {
             Sprite s = TROPHIES[tro[k]];
             int x = Math.round(cols * (0.06f + 0.88f * (k + 0.5f) / 6f));
             if (g > 0 && Math.abs(x - cx) < 14 * unit) x += 16 * unit;
+            if (wreckX >= 0 && x + s.w * unit > wreckX - 2 * unit && x < wreckX + WRECK.w * unit + 2 * unit) {
+                x = wreckX + WRECK.w * unit + 3 * unit;           // past the wreck
+            }
             if (x < 0 || x + s.w * unit >= cols) continue;
             int y = bedTop[x + s.w * unit / 2] - s.h * unit + unit;
             stamp(s, x, y);
@@ -1059,15 +1201,8 @@ final class OceanScene {
             int sc = Math.max(1, unit);
             int w = PixelFont.width(msg) * sc;
             int top = Math.round(rows * 0.035f); // above the clock, clear of the digits
-            int left = Math.max(0, (cols - w) / 2);
-            List<Integer> cells = new ArrayList<>();
-            int x = left;
-            for (int k = 0; k < msg.length(); k++) {
-                for (int i : PixelFont.cells(msg.charAt(k), x, top, sc, cols, rows)) cells.add(i);
-                x += PixelFont.advance(msg.charAt(k), sc);
-            }
-            noteCells = new int[cells.size()];
-            for (int k = 0; k < noteCells.length; k++) noteCells[k] = cells.get(k);
+            int left = TypedLine.centred(msg, sc, cols);
+            noteChars = TypedLine.cells(msg, left, top, sc, cols, rows);
             noteX0 = left; noteY0 = top; noteW = Math.min(cols, w + sc); noteH = PixelFont.H * sc;
         }
         if (bottleStart >= 0 && t - bottleStart > BOTTLE_MS) bottleStart = -1;
@@ -1193,6 +1328,19 @@ final class OceanScene {
             "WbWWWkkWWWbW",
             "WbWWWWWWWWbW",
             "bbbbbbbbbbbb");
+    /** Where the fish of a school swim, relative to the leader (in units). */
+    private static final int[][] SCHOOL = {{0, 0}, {-11, -6}, {-9, 6}, {-22, 1}, {-19, -8}};
+
+    /** A small sunken boat: hull and a broken mast (the top rows show first). */
+    static final Sprite WRECK = new Sprite("Wwm", new int[]{WOOD, BAND, BAND},
+            ".........m..........",
+            ".........m..........",
+            ".....mmmmm..........",
+            ".........m..........",
+            "WWWWWWWWWWWWWWWWWW..",
+            ".WwWWwWWwWWwWWwWWW..",
+            "..WWWWWWWWWWWWWWWWW.",
+            "....WWWWWWWWWWWWW...");
     static final Sprite BOTTLE = new Sprite("GCN", new int[]{GLASS, CORK, NOTE},
             "......C",
             ".GGGGGC",

@@ -19,6 +19,10 @@ import java.util.Random;
  * petals when it changes. A ladybug climbs from the root to a branch tip once a minute (the
  * seconds hand); at :00 a bee visits a flower. After sunset fireflies blink around the tree.
  * In the last minutes before midnight the leaves turn and fall: autumn, then a new seed.
+ * A few shrubs sprout around the tree in the morning and flower by evening. On some afternoons
+ * (the same days and times as the kampung's) a storm darkens the sky: rain, a puddle at the
+ * roots that dries slowly, and a faint rainbow after. On festival days a few small, still
+ * decorations go up one at a time.
  *
  * Power: everything that doesn't move is composed once into `base` (once a minute, or while the
  * tree grows in or turns in autumn, just the tree's box). Each frame only the rectangles under
@@ -121,9 +125,30 @@ final class GardenScene {
     private long birdStart = -1;
     private boolean birdFromRight;
     private int birdHour = -1;
-    private int[] noteCells = new int[0];
+    private int[][] noteChars = new int[0][];  // the bird's line, cells per character
     private int noteX0, noteY0, noteW, noteH;
-    private boolean noteShown;
+    private int noteVis;                        // characters typed so far
+
+    // ---- weather (the shared weather setting; same storm days as the kampung) ----
+    private final int stormFrom, stormLen;      // minute of the day it starts, minutes; -1 = none today
+    private float storm;                        // 0..1 in quarter steps (sky darkness)
+    private int puddle;                         // 0..PUDDLE_STEPS
+    private int rainbow;                        // 0..3 (faint .. less faint)
+    private int rbX, rbY, rbOut, rbBand;        // the rainbow's arc
+    private static final int PUDDLE_STEPS = 8, DRY_MIN = 48, MAX_DROPS = 110;
+    private final float[] dX = new float[MAX_DROPS], dY = new float[MAX_DROPS];
+    private int nDrops;
+    private boolean raining, flashPrev;
+
+    // ---- shrubs and festival things (still layer; deterministic per date) ----
+    private final int fest;
+    private int[] shrubX = new int[0], shrubFrom = new int[0], shrubStep = new int[0], shrubCol = new int[0];
+    private final int[] shrubStage = new int[4];
+    private final int[] lightCell = new int[24];
+    private int nLights;
+    private final int[] lanX = {-1, -1}, lanY = new int[2], lanT = new int[2];
+    private int poleX = -1, flagDir = 1;
+    private int festShown, festMask;
 
     void setStats(Stats s, boolean record) {
         stats = s;
@@ -133,7 +158,7 @@ final class GardenScene {
     // ---- dirty rectangles ----
     private int[] prev = new int[64], cur = new int[64];
     private int nPrev, nCur;
-    final int[] dirty = new int[4 * 80];
+    final int[] dirty = new int[4 * 300]; // rain: a small rectangle per drop
     int nDirty;
     boolean fullDirty = true;
 
@@ -179,6 +204,87 @@ final class GardenScene {
         // A new spot every day, anywhere from near the left edge to near the right (the canopy is
         // pulled back inside the screen when it would overhang).
         baseX = buildTree(r, Math.round(cols * (0.12f + 0.76f * r.nextFloat())));
+
+        int[] sp = stormPlan(day);
+        stormFrom = sp != null ? sp[0] : -1;
+        stormLen = sp != null ? sp[1] : 0;
+        Calendar dc = Calendar.getInstance();
+        dc.clear();
+        dc.set(Calendar.YEAR, day / 1000);
+        dc.set(Calendar.DAY_OF_YEAR, day % 1000);
+        dc.set(Calendar.HOUR_OF_DAY, 12);
+        fest = Festivals.of(prefs, dc);
+        planDecor(new Random(day * 4243L + 3));
+    }
+
+    /**
+     * Today's afternoon storm {start minute, length in minutes}, or null (about one day in three).
+     * The kampung's rule from the same seed, so both scenes have their storm on the same days at
+     * the same time: its generator first draws 60 stars (three numbers each) and two hill phases.
+     */
+    /** Today's afternoon storm, the same one the Kampung has (one shared rule). */
+    static int[] stormPlan(int day) {
+        return KampungScene.stormFor(day);
+    }
+
+    /** Where today's shrubs, festival lights, lanterns and flag pole go. */
+    private void planDecor(Random r) {
+        float trunk = sTh.length > 0 ? sTh[0] / 2 : 2;
+        int n = 2 + r.nextInt(3);
+        shrubX = new int[n]; shrubFrom = new int[n]; shrubStep = new int[n]; shrubCol = new int[n];
+        int side = r.nextBoolean() ? 1 : -1, ns = 0;
+        int half = SHRUB[SHRUB.length - 1].w * unit / 2 + 1;
+        for (int k = 0; k < n; k++) {
+            int dist = Math.round(trunk + (31 + (k / 2) * 17 + r.nextInt(7)) * unit);
+            int s = k % 2 == 0 ? side : -side;
+            int x = baseX + s * dist;
+            if (x - half < 1 || x + half >= cols - 1) x = baseX - s * (dist + 34 * unit); // other side, further out
+            int from = 360 + r.nextInt(150), step = 100 + r.nextInt(35), col = r.nextInt(3);
+            if (x - half < 1 || x + half >= cols - 1) continue;
+            shrubX[ns] = x; shrubFrom[ns] = from; shrubStep[ns] = step; shrubCol[ns] = col;
+            ns++;
+        }
+        shrubX = java.util.Arrays.copyOf(shrubX, ns);
+        // Christmas lights: leaf pixels spread over the day's canopy, clear of the clock where
+        // the tree allows (each shows once its leaf has grown).
+        nLights = 0;
+        int gap = 7 * unit;
+        for (int tries = 0; tries < 600 && nLights < lightCell.length && leafIdx.length > 0; tries++) {
+            int i = leafIdx[r.nextInt(leafIdx.length)], x = i % cols, y = i / cols;
+            if (tries < 400 && onClock(x, y, x + unit, y + unit)) continue;
+            boolean near = false;
+            for (int k = 0; k < nLights && !near; k++) {
+                near = Math.abs(lightCell[k] % cols - x) < gap && Math.abs(lightCell[k] / cols - y) < gap;
+            }
+            if (near && tries < 500) continue;
+            lightCell[nLights++] = i;
+        }
+        // Lanterns: low on a branch on each side of the trunk (half way along it or at its end),
+        // clear of the clock if the tree allows.
+        float[] best = {-1e9f, -1e9f};
+        for (int k = 0; k < nSeg; k++) {
+            if (sDepth[k] < 1 || sDepth[k] > 3) continue;
+            for (int h = 1; h <= 2; h++) {
+                float f = h / 2f;
+                float x = sX0[k] + (sX1[k] - sX0[k]) * f, y = sY0[k] + (sY1[k] - sY0[k]) * f;
+                float dx = x - baseX;
+                if (Math.abs(dx) < Math.max(8 * unit, trunk * 3) || y + 12 * unit >= groundTop) continue;
+                int sd = dx < 0 ? 0 : 1;
+                float score = y - (onClock(x - 3 * unit, y, x + 3 * unit, y + 11 * unit) ? 1000 : 0);
+                if (score > best[sd]) {
+                    best[sd] = score;
+                    lanX[sd] = Math.round(x);
+                    lanY[sd] = Math.round(y);
+                    lanT[sd] = sT0[k] + Math.round((sT1[k] - sT0[k]) * f) + 200;
+                }
+            }
+        }
+        // The flag pole: beside the tree, with the flag flying away from it.
+        int d = Math.round(trunk + 24 * unit);
+        int w = FLAG_W + 2;
+        if (baseX + d + w < cols - 1) { poleX = baseX + d; flagDir = 1; }
+        else if (baseX - d - w > 1) { poleX = baseX - d; flagDir = -1; }
+        else poleX = -1;
     }
 
     // ---- the tree ----
@@ -377,7 +483,12 @@ final class GardenScene {
             AUT0 = 13, TEXT = 16, PLANTER = 17, STEM = 18, PET0 = 19, CENTER = 23, BUD = 24,
             LB_RED = 25, LB_BLACK = 26, BEE_Y = 27, BEE_K = 28, WING = 29, BIRD = 30, BIRD_BELLY = 31,
             BEAK = 32, NEST0 = 33, NEST1 = 34, EGG = 35, CHICK = 36, CAP = 37, DOT = 38, MSTEM = 39,
-            FLY = 40, FLY_GLOW = 41, NOTE = 42, SPROUT = 43, N_PAL = 44;
+            FLY = 40, FLY_GLOW = 41, NOTE = 42, SPROUT = 43, RAIN = 44, FLASH = 45, PUDDLE = 46, PUDDLE_HI = 47,
+            RB0 = 48, FLAME = 54, FLAME_CORE = 55, BAMBOO = 56, BAMBOO_D = 57, CLAY = 58, CLAY_D = 59, XL0 = 60,
+            LANT = 64, LANT_HI = 65, GOLD = 66, POLE = 67, FL_RED = 68, FL_WHITE = 69, FL_BLUE = 70, FL_YEL = 71,
+            SF0 = 72, N_PAL = 75;
+    /** The rainbow's bands, outside in. */
+    private static final int[] RAINBOW = {0xE05050, 0xF09040, 0xF0D850, 0x70C060, 0x5090E0, 0x9070D0};
     private final int[] pal = new int[N_PAL];
     private int colorKey = Integer.MIN_VALUE;
     private float dusk; // 0 day sky .. 1 night sky
@@ -385,13 +496,18 @@ final class GardenScene {
     private boolean updateColors() {
         int key = prefs.background * 1000000 + prefs.style * 100000 + prefs.theme * 10000
                 + prefs.brightness * 1000 + Math.round(prefs.warmth * 20) * 20 + Math.round(dusk * 10);
+        key = key * 20 + Math.round(storm * 4) * 4 + rainbow;
         if (key == colorKey) return false;
         colorKey = key;
         int st = prefs.style;
         float sf = st == 0 ? Prefs.BACKGROUND_F[prefs.background] : st == 1 ? 0.06f : 0f; // sky
         float tf = st == 0 ? 0.75f : st == 1 ? 0.82f : 1f;   // tree, flowers
         float gf = st == 0 ? 0.45f : st == 1 ? 0.6f : 1f;    // ground
+        float gloom = 1 - 0.25f * storm;                       // a storm darkens everything a little
+        tf *= gloom;
+        gf *= gloom;
         int skyRgb = mixRgb(0x6A9AC8, 0x1A2850, dusk);
+        if (storm > 0) skyRgb = mixRgb(skyRgb, 0x2E343C, storm * 0.8f);
         pal[0] = 0xFF000000;
         pal[SKY] = sf > 0 ? prefs.color(skyRgb, sf) : 0xFF000000;
         pal[STAR] = prefs.color(0xC8CCE0, 0.45f * dusk);
@@ -436,6 +552,32 @@ final class GardenScene {
         pal[FLY_GLOW] = prefs.color(0x8A9A3A, 0.7f);
         pal[NOTE] = prefs.color(0xEEF4E4, 0.9f);
         pal[SPROUT] = prefs.color(0x7CC050, tf);
+        pal[RAIN] = prefs.color(0x9AB0C8, 0.55f);
+        pal[FLASH] = prefs.color(0x8A90A8, st == 2 ? 0.35f : 0.6f);
+        pal[PUDDLE] = prefs.color(mixRgb(0x7898B8, skyRgb, 0.35f), Math.min(1f, gf + 0.3f));
+        pal[PUDDLE_HI] = prefs.color(0xC0D4E8, Math.min(1f, gf + 0.35f));
+        for (int k = 0; k < 6; k++) pal[RB0 + k] = mixArgb(pal[SKY], prefs.color(RAINBOW[k], 1f), 0.11f * rainbow);
+        pal[FLAME] = prefs.color(0xFFC840, 1f);
+        pal[FLAME_CORE] = prefs.color(0xFF7A20, 1f);
+        pal[BAMBOO] = prefs.color(0xC8A860, tf);
+        pal[BAMBOO_D] = prefs.color(0x7A6234, tf);
+        pal[CLAY] = prefs.color(0xB0582A, tf);
+        pal[CLAY_D] = prefs.color(0x7A3818, tf);
+        pal[XL0] = prefs.color(0xFF4040, 1f);
+        pal[XL0 + 1] = prefs.color(0xFFD040, 1f);
+        pal[XL0 + 2] = prefs.color(0x50A0FF, 1f);
+        pal[XL0 + 3] = prefs.color(0xF0F0F0, 1f);
+        pal[LANT] = prefs.color(0xD02020, tf + 0.1f);
+        pal[LANT_HI] = prefs.color(0xF05040, tf + 0.1f);
+        pal[GOLD] = prefs.color(0xE8B830, tf + 0.1f);
+        pal[POLE] = prefs.color(0xB8B8B0, tf);
+        pal[FL_RED] = prefs.color(0xCC0001, tf + 0.1f);
+        pal[FL_WHITE] = prefs.color(0xF4F4F4, tf + 0.1f);
+        pal[FL_BLUE] = prefs.color(0x010066, tf + 0.25f);
+        pal[FL_YEL] = prefs.color(0xFFCC00, tf + 0.1f);
+        pal[SF0] = prefs.color(0xE83040, tf);      // hibiscus red
+        pal[SF0 + 1] = prefs.color(0xE860B0, tf);  // bougainvillea pink
+        pal[SF0 + 2] = prefs.color(0xF4D040, tf);  // allamanda yellow
         for (int i = 0; i < textPx.length; i++) textPx[i] = text[i] != 0 ? pal[TEXT] : 0;
         textChanged = true;
         skyKey = Integer.MIN_VALUE;
@@ -447,6 +589,10 @@ final class GardenScene {
         int gg = (int) (((a >> 8) & 0xFF) * (1 - t) + ((b >> 8) & 0xFF) * t);
         int bl = (int) ((a & 0xFF) * (1 - t) + (b & 0xFF) * t);
         return (r << 16) | (gg << 8) | bl;
+    }
+
+    private static int mixArgb(int a, int b, float t) {
+        return 0xFF000000 | mixRgb(a & 0xFFFFFF, b & 0xFFFFFF, t);
     }
 
     // ---- what each still cell looks like ----
@@ -466,14 +612,29 @@ final class GardenScene {
         int gy = groundY[x];
         if (y >= gy) {
             int d = y - gy;
+            if (Math.abs(x - baseX) <= puddleHalf(d)) return pal[(hash(x * 7 + d) & 15) == 0 ? PUDDLE_HI : PUDDLE];
             int h = hash(i);
             if (d < 2 * unit) return pal[GRASS0 + ((h >>> 30) == 0 ? 1 : 0)];
             return pal[SOIL0 + ((h >>> 28) % 3)];
         }
-        if (y >= gy - blade[x] && (x & 1) == 0) return pal[GRASS0 + 1];
+        if (y >= gy - blade[x] && (x & 1) == 0 && Math.abs(x - baseX) > puddleHalf(0)) return pal[GRASS0 + 1];
         if (sky[i] != 0) return sky[i];
-        if (evening && star[i] != 0) return pal[STAR];
+        if (rainbow > 0) {
+            int dx = x - rbX, dy = y - rbY;
+            int d2 = dx * dx + dy * dy, in = rbOut - 6 * rbBand;
+            if (d2 < rbOut * rbOut && d2 >= in * in) {
+                int b = (int) ((rbOut - Math.sqrt(d2)) / rbBand);
+                return pal[RB0 + Math.max(0, Math.min(5, b))];
+            }
+        }
+        if (evening && star[i] != 0 && storm == 0) return pal[STAR];
         return pal[SKY];
+    }
+
+    /** Half the puddle's width `d` rows down from the top of the ground (-1: none). */
+    private int puddleHalf(int d) {
+        if (puddle <= 0 || d > unit) return -1;
+        return Math.round(16 * unit * puddle / (float) PUDDLE_STEPS) - d * d * 2;
     }
 
     /** A leaf's colour now (autumn turns it, then it falls): palette index, -1 = gone. */
@@ -712,10 +873,13 @@ final class GardenScene {
 
     // ---- sky ----
 
-    /** Sun by day, moon (tonight's phase) by night, along an arc; recomputed once a minute. */
+    /**
+     * Sun by day, moon (tonight's phase) by night, along an arc (SunMoon, shared with the other
+     * scenes); recomputed once a minute. Hidden behind the clouds in a storm.
+     */
     private boolean updateSky(Calendar c) {
         int m = minuteOfDay(c);
-        int[] tt = prefs.city > 0 ? Sun.times(prefs.city, c) : new int[]{420, 1155};
+        int[] tt = SunMoon.times(prefs, c);
         int rise = tt[0], set = tt[1];
         float dk;
         if (m >= set + 45 || m < rise - 45) dk = 1f;
@@ -728,46 +892,80 @@ final class GardenScene {
         afterSunset = m >= set;
         boolean ev = m >= set || m < rise;
         if (ev != evening) { evening = ev; changed = true; }
-        int key = prefs.sunMoon ? m + colorKey * 1441 : -2;
+        boolean show = prefs.sunMoon && storm < 0.5f;
+        int key = show ? m + colorKey * 1441 : -2;
         if (key == skyKey && !changed) return false;
         skyKey = key;
         for (int k = 0; k < nSky; k++) sky[skyCells[k]] = 0;
         nSky = 0;
-        if (!prefs.sunMoon) return true;
-        boolean sun = m >= rise && m < set;
-        float p;
-        if (sun) {
-            p = (m - rise) / (float) Math.max(1, set - rise);
-        } else {
-            int mm = m < rise ? m + 1440 : m;
-            p = (mm - set) / (float) Math.max(1, 1440 - set + rise);
-        }
-        int horizon = groundTop, top = Math.round(rows * 0.1f);
-        int cx = Math.round(cols * (0.06f + 0.88f * p));
-        int cy = Math.round(horizon - (horizon - top) * (float) Math.sin(Math.PI * p));
-        int r = Math.max(3, Math.round(rows * (sun ? 0.026f : 0.022f)));
-        int core = prefs.color(sun ? 0xFFD27A : 0xE8E4D0, sun ? 1f : 0.85f);
-        int edge = prefs.color(sun ? 0xF0A850 : 0xC8C4B4, sun ? 1f : 0.85f);
-        double phase = sun ? 0 : Sun.moonPhase(c.getTimeInMillis());
-        if (skyCells.length < (2 * r + 1) * (2 * r + 1)) skyCells = new int[(2 * r + 1) * (2 * r + 1)];
-        for (int dy = -r; dy <= r; dy++) {
-            double w = Math.sqrt(Math.max(0, r * r - dy * dy + r * 0.8));
-            for (int dx = -r; dx <= r; dx++) {
-                double d = Math.sqrt(dx * dx + dy * dy);
-                if (d > r + 0.4) continue;
-                if (!sun) {
-                    double term = w * Math.cos(2 * Math.PI * phase);
-                    boolean lit = phase < 0.5 ? dx >= term : dx <= -term;
-                    if (!lit) continue;
+        if (!show) return true;
+        int max = SunMoon.maxCells(rows);
+        if (skyCells.length < max) { skyCells = new int[max]; skyColors = new int[max]; }
+        nSky = SunMoon.draw(prefs, c, cols, rows, groundTop, Math.round(rows * 0.1f), skyCells, skyColors);
+        for (int k = 0; k < nSky; k++) sky[skyCells[k]] = skyColors[k];
+        return true;
+    }
+
+    private int[] skyColors = new int[0];
+
+    // ---- weather ----
+
+    /**
+     * The storm now (the kampung's timing: three minutes darkening, rain for stormLen minutes,
+     * three clearing), the puddle at the roots (spreads in the rain, dries over DRY_MIN
+     * minutes) and the rainbow after a daytime storm (in and out over a few minutes).
+     */
+    private void weather(Calendar c, boolean animate) {
+        float st = 0;
+        int pd = 0, rb = 0;
+        if (prefs.kampungWeather && stormFrom >= 0 && demoStart < 0 && dropStart < 0) {
+            float into = msOfDay(c) / 60_000f - stormFrom;
+            if (into >= -3 && into < stormLen + 3) {
+                st = into < 0 ? (into + 3) / 3f : into > stormLen ? (stormLen + 3 - into) / 3f : 1f;
+                st = Math.round(Math.max(0f, Math.min(1f, st)) * 4) / 4f;
+            }
+            int im = minuteOfDay(c) - stormFrom;
+            if (im >= -1 && im < stormLen) pd = 1 + (im + 1) * (PUDDLE_STEPS - 1) / (stormLen + 1);
+            else if (im >= stormLen) pd = PUDDLE_STEPS - (im - stormLen) * PUDDLE_STEPS / DRY_MIN;
+            pd = Math.max(0, Math.min(PUDDLE_STEPS, pd));
+            int j = im - stormLen - 2;
+            if (j >= 0 && j <= 8 && SunMoon.isDay(prefs, c)) {
+                rb = Math.max(0, Math.min(3, Math.min(j + 1, 8 - j)));
+                if (rb > 0 && rainbow == 0) {
+                    // Opposite the sun as the storm ends; a big arc rising from below the ground.
+                    int[] tt = SunMoon.times(prefs, c);
+                    float p = Math.max(0f, Math.min(1f, (stormFrom + stormLen - tt[0]) / (float) Math.max(1, tt[1] - tt[0])));
+                    rbX = Math.round(cols * (1 - (0.06f + 0.88f * p)));
+                    rbY = groundTop + Math.round(rows * 0.12f);
+                    rbOut = Math.round(rows * 0.62f);
+                    rbBand = Math.max(1, unit);
                 }
-                int x = cx + dx, y = cy + dy;
-                if (x < 0 || y < 0 || x >= cols || y >= groundTop) continue;
-                int i = y * cols + x;
-                sky[i] = d > r - 1.2 ? edge : core;
-                skyCells[nSky++] = i;
             }
         }
-        return true;
+        storm = st;
+        puddle = pd;
+        rainbow = rb;
+        raining = storm >= 0.75f && animate;
+    }
+
+    /** Rain streaks fall through the air and stop at the first thing they meet. */
+    private void rainTick(int ticks) {
+        int want = raining ? Math.round(MAX_DROPS * Math.min(1f, storm) * Math.min(1f, cols / 480f)) : 0;
+        int skyC = pal[SKY];
+        while (nDrops < want) {
+            dX[nDrops] = rnd.nextInt(cols);
+            dY[nDrops] = -rnd.nextInt(Math.max(1, groundTop));
+            nDrops++;
+        }
+        for (int k = 0; k < nDrops; k++) {
+            dY[k] += 3.2f * sc * ticks;
+            dX[k] -= 0.6f * sc * ticks;
+            int x = Math.round(dX[k]), y = Math.round(dY[k]);
+            boolean land = x < 0 || (x < cols && (y >= groundY[x] || (y >= 0 && base[y * cols + x] != skyC)));
+            if (!land) continue;
+            if (k < want) { dX[k] = rnd.nextInt(cols + Math.round(20 * sc)); dY[k] = -rnd.nextInt(Math.max(1, Math.round(30 * sc))); }
+            else { nDrops--; dX[k] = dX[nDrops]; dY[k] = dY[nDrops]; k--; }
+        }
     }
 
     // ---- particles (petals and falling leaves) ----
@@ -823,7 +1021,11 @@ final class GardenScene {
      * animate = false: no particles, bee, birds or fireflies; the ladybug ticks.
      */
     void update(Calendar c, long t, boolean animate, boolean vacuumAllowed) {
-        boolean recompose = updateColors();
+        int oldPuddle = puddle;
+        float oldStorm = storm;
+        weather(c, animate);
+        boolean recompose = updateColors() || puddle != oldPuddle;
+        if ((storm >= 0.5f) != (oldStorm >= 0.5f)) skyKey = Integer.MIN_VALUE; // sun behind the clouds
         long wall = c.getTimeInMillis();
         int minute = minuteOfDay(c);
         boolean gap = lastWall == 0 || Math.abs(wall - lastWall) > 120_000;
@@ -837,7 +1039,7 @@ final class GardenScene {
 
         String key = ClockText.key(prefs, c);
         if (!key.equals(shownKey)) {
-            layoutText(c, wall, shownKey.isEmpty() || gap || !animate, animate);
+            layoutText(c, wall, shownKey.isEmpty() || gap, animate);
             shownKey = key;
             recompose = true;
         } else if (minute != lastMinute) {
@@ -890,7 +1092,8 @@ final class GardenScene {
         lastTick += ticks * 33L;
         if (t - lastTick > 200) lastTick = t;
         if (ticks > 0) tickParticles(ticks);
-        if (!animate) { nP = 0; beeStart = -1; }
+        if (ticks > 0) rainTick(ticks);
+        if (!animate) { nP = 0; beeStart = -1; nDrops = 0; }
 
         render(c, t, animate);
     }
@@ -1055,13 +1258,24 @@ final class GardenScene {
         int nf = animate && critters && afterSunset && aStep == 0 && demoStart < 0 && dropStart < 0 && g > 1500 ? 7 : 0;
         int[] fx = flyX, fy = flyY;
         boolean[] fon = flyOn;
+        if (nf > 0 && flyP == null) {
+            // Each firefly's path and blink, worked out once (not every frame).
+            flyP = new double[7][6];
+            for (int k = 0; k < 7; k++) {
+                Random r = new Random(day * 97L + k);
+                double[] f = flyP[k];
+                f[0] = treeBox[0] + r.nextFloat() * treeBox[2];
+                f[1] = treeBox[1] + treeBox[3] * (0.2f + 0.75f * r.nextFloat());
+                f[2] = r.nextDouble() * 6.283; f[3] = 5200 + r.nextInt(3000); f[4] = 3900 + r.nextInt(2500);
+                f[5] = r.nextInt(4000) * 10_000L + (3000 + r.nextInt(2500));
+            }
+        }
         for (int k = 0; k < nf; k++) {
-            Random r = new Random(day * 97L + k);
-            float bx = treeBox[0] + r.nextFloat() * treeBox[2], by = treeBox[1] + treeBox[3] * (0.2f + 0.75f * r.nextFloat());
-            double ph = r.nextDouble() * 6.283, sp1 = 5200 + r.nextInt(3000), sp2 = 3900 + r.nextInt(2500);
-            fx[k] = Math.round(bx + (float) Math.sin(t / sp1 + ph) * 16 * sc);
-            fy[k] = Math.round(by + (float) Math.sin(t / sp2 + ph * 2) * 9 * sc);
-            long cyc = (t + r.nextInt(4000)) % (3000 + r.nextInt(2500));
+            double[] f = flyP[k];
+            fx[k] = (int) Math.round(f[0] + Math.sin(t / f[3] + f[2]) * 16 * sc);
+            fy[k] = (int) Math.round(f[1] + Math.sin(t / f[4] + f[2] * 2) * 9 * sc);
+            long blink = (long) f[5];
+            long cyc = (t + blink / 10_000) % (blink % 10_000);
             fon[k] = cyc < 1100;
             addCur(fx[k] - 1, fy[k] - 1, 3, 3);
         }
@@ -1069,7 +1283,8 @@ final class GardenScene {
         int birdX = 0, birdY = 0;
         boolean bird = birdUpdate(c, t, animate);
         float bp = bird ? (t - birdStart) / (float) BIRD_MS : 0f;
-        boolean note = bird && bp > 0.25f && bp < 0.75f;
+        // Its line types in while the bird passes the middle, then un-types.
+        int vis = bird ? TypedLine.visible(noteChars.length, t - birdStart - BIRD_MS / 4, BIRD_MS / 2) : 0;
         boolean showBird = bird && critters;
         if (showBird) {
             float bx = bp * (cols + BIRD_UP.w * unit);
@@ -1080,8 +1295,19 @@ final class GardenScene {
             birdY = Math.round(rows * 0.14f - rise * 2 * unit + (float) Math.sin(t / 1700.0) * 2 * unit);
             addCur(birdX, birdY, BIRD_UP.w * unit, BIRD_UP.h * unit);
         }
-        if (bird || noteShown) addCur(noteX0, noteY0, noteW, noteH);
-        noteShown = note;
+        if (vis != noteVis) addCur(noteX0, noteY0, noteW, noteH); // only when a letter comes or goes
+        noteVis = vis;
+        // Rain: a small rectangle per streak.
+        int streak = 2 * unit;
+        for (int k = 0; k < nDrops; k++) {
+            addCur(Math.round(dX[k]), Math.round(dY[k]) - streak + 1, streak / 3 + 1, streak);
+        }
+        // Lightning: one brief flash, about a third of the way into the rain.
+        boolean flash = false;
+        if (raining && nDrops > 0) {
+            float dtS = (ms / 60_000f - stormFrom - stormLen * 0.3f) * 60f;
+            flash = dtS >= 0 && dtS < 0.2f;
+        }
         if (nP > 0) {
             int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
             for (int k = 0; k < nP; k++) {
@@ -1091,11 +1317,31 @@ final class GardenScene {
             addCur(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
         }
 
-        if (fullDirty) {
+        if (nPrev + nCur > dirty.length) fullDirty = true;
+        if (fullDirty || flash || flashPrev) {
             System.arraycopy(base, 0, px, 0, px.length);
+            if (flash || flashPrev) fullDirty = true;
         } else {
             restore(prev, nPrev);
             restore(cur, nCur);
+        }
+        flashPrev = flash;
+        int skyC = pal[SKY];
+        if (flash) {
+            int fc = pal[FLASH];
+            for (int i = 0; i < px.length; i++) if (base[i] == skyC) px[i] = fc;
+        }
+        if (nDrops > 0) {
+            int rc = pal[RAIN];
+            for (int k = 0; k < nDrops; k++) {
+                int x = Math.round(dX[k]), y = Math.round(dY[k]);
+                for (int j = 0; j < streak; j++) {
+                    int yy = y - j, xx = x + j / 3;
+                    if (xx < 0 || yy < 0 || xx >= cols || yy >= rows) continue;
+                    int i = yy * cols + xx;
+                    if (base[i] == skyC) px[i] = rc;
+                }
+            }
         }
 
         if (bug) drawSprite(LADYBUG, bugX, bugY, !bugRight, true);
@@ -1118,7 +1364,7 @@ final class GardenScene {
             Sprite b = gliding ? BIRD_GLIDE : (t / 130) % 2 == 0 ? BIRD_UP : BIRD_DOWN;
             drawSprite(b, birdX, birdY, birdFromRight, false);
         }
-        if (note) for (int i : noteCells) px[i] = pal[NOTE];
+        for (int k = 0; k < vis; k++) for (int i : noteChars[k]) px[i] = pal[NOTE];
 
         nDirty = 0;
         if (!fullDirty) {
@@ -1146,14 +1392,22 @@ final class GardenScene {
         }
     }
 
-    /** True while something needs smooth frames (petals, leaves, the bee, grow-in, autumn). */
+    /** True while something needs smooth frames (petals, leaves, the bee, grow-in, autumn, rain). */
     boolean busy() {
-        return nP > 0 || beeStart >= 0 || growStart >= 0 || autumn;
+        return nP > 0 || beeStart >= 0 || growStart >= 0 || autumn || nDrops > 0;
+    }
+
+    /** Busy only because of rain: streaks look the same at ~9 fps (saves power in storms). */
+    private double[][] flyP;   // fireflies: base x, y, phase, two periods, blink
+
+    boolean rainOnly() {
+        return nDrops > 0 && nP == 0 && beeStart < 0 && growStart < 0 && !autumn;
     }
 
     /** True while something moves slowly (ladybug, fireflies, the bird): 8 fps is enough. */
     boolean moving() {
-        return prefs.gardenCritters && (nPath > 1 || afterSunset || birdStart >= 0);
+        // The stats line types in even without the bird (critters off), so it counts too.
+        return (prefs.gardenCritters && (nPath > 1 || afterSunset)) || birdStart >= 0;
     }
 
     /** The bird crosses fast (about 12 cells a second): it needs 8 fps; the rest is slow. */
@@ -1206,9 +1460,11 @@ final class GardenScene {
             tipY = Math.round(sY0[k] + (sY1[k] - sY0[k]) * f);
         }
         long key = ((period * 1000 + (nestShown ? nest : 0) * 100 + mush * 10 + (seed ? 1 : 0)) * 4096 + tipX + 1) * 4096 + tipY + 1;
+        key = key * 1_000_003L + decorState(c);
         if (key == extrasKey) return false;
         extrasKey = key;
         java.util.Arrays.fill(extra, (byte) 0);
+        stampShrubs();
         if (seed) stamp(SEEDLING, baseX - SEEDLING.w * unit / 2, groundY[baseX] - SEEDLING.h * unit + unit);
         if (tipX >= 0) stamp(TUFT, tipX - TUFT.w * unit / 2, tipY - TUFT.h * unit + unit);
         if (nestShown) {
@@ -1226,7 +1482,147 @@ final class GardenScene {
             if (x < 0 || x + MUSH.w * unit >= cols) continue;
             stamp(k % 3 == 2 ? MUSH_SMALL : MUSH, x, groundY[x + MUSH.w * unit / 2] - (k % 3 == 2 ? MUSH_SMALL : MUSH).h * unit + unit);
         }
+        stampFestival();
         return true;
+    }
+
+    // ---- shrubs and festival things ----
+
+    /** Things go up from 07:00, one every `every` minutes; autumn takes them down again. */
+    private static int upTo(int n, int from, int every, int m, float a) {
+        int up = m < from ? 0 : Math.min(n, 1 + (m - from) / every);
+        if (a > 0) up = Math.min(up, (int) Math.ceil(n * (1 - Math.min(1f, a / 0.85f))));
+        return up;
+    }
+
+    /**
+     * Today's shrub stages and festival things for now (a pure function of the time, so a
+     * restart shows the same). Returns a key that changes whenever any of them changes a step.
+     */
+    private long decorState(Calendar c) {
+        // At midnight the old day finishes as it ended (its autumn takes everything down).
+        int m = demoStart >= 0 || dropStart >= 0 ? 1439 : minuteOfDay(c);
+        float a = aStep / (float) A_STEPS;
+        long key = 17;
+        int top = SHRUB.length;
+        int wilt = a > 0 ? (int) Math.ceil(top * (1 - Math.min(1f, a / 0.85f))) : top;
+        for (int k = 0; k < shrubX.length; k++) {
+            int st = m < shrubFrom[k] ? 0 : Math.min(top, 1 + (m - shrubFrom[k]) / shrubStep[k]);
+            shrubStage[k] = Math.min(st, wilt);
+            key = key * 8 + shrubStage[k];
+        }
+        festShown = 0;
+        festMask = 0;
+        switch (fest) {
+            case Festivals.RAYA:
+            case Festivals.DEEPAVALI:
+                festShown = upTo(5, 420, 2, m, a);
+                break;
+            case Festivals.XMAS:
+                festShown = upTo(nLights, 420, 1, m, a);
+                for (int k = 0; k < festShown; k++) {
+                    int i = lightCell[k];
+                    if (leafT[i] <= g && leafColor(i) >= 0) festMask |= 1 << k;
+                }
+                break;
+            case Festivals.CNY:
+                festShown = upTo(2, 420, 3, m, a);
+                for (int k = 0; k < festShown; k++) if (lanX[k] >= 0 && lanT[k] <= g) festMask |= 1 << k;
+                break;
+            case Festivals.MERDEKA:
+            case Festivals.MSIA:
+                // The pole, then the flag raised up it a step a minute.
+                festShown = poleX >= 0 ? upTo(6, 420, 1, m, a) : 0;
+                break;
+            default:
+                break;
+        }
+        return (key * 64 + festShown) * 1_000_000_007L + festMask;
+    }
+
+    private void stampShrubs() {
+        for (int k = 0; k < shrubX.length; k++) {
+            int st = shrubStage[k];
+            if (st <= 0) continue;
+            Sprite sp = SHRUB[st - 1];
+            int x = shrubX[k] - sp.w * unit / 2;
+            stamp(sp, x, groundY[shrubX[k]] - sp.h * unit + unit, SF0, SF0 + shrubCol[k]);
+        }
+    }
+
+    private void stampFestival() {
+        if (festShown <= 0) return;
+        switch (fest) {
+            case Festivals.RAYA:
+            case Festivals.DEEPAVALI: {
+                // Lamps along the front of the bed below the tree, put out from the middle.
+                Sprite sp = fest == Festivals.RAYA ? PELITA : DIYA;
+                int[] order = {2, 1, 3, 0, 4};
+                for (int n = 0; n < festShown; n++) {
+                    int k = order[n];
+                    int x = baseX + (k - 2) * 13 * unit - sp.w * unit / 2;
+                    x = Math.max(1, Math.min(cols - sp.w * unit - 1, x));
+                    int bottom = Math.min(rows - 2 * unit, groundY[x] + 10 * unit);
+                    stamp(sp, x, bottom - sp.h * unit);
+                }
+                break;
+            }
+            case Festivals.XMAS:
+                for (int k = 0; k < festShown; k++) {
+                    if ((festMask & (1 << k)) == 0) continue;
+                    int i = lightCell[k], x = i % cols, y = i / cols;
+                    for (int yy = y; yy < y + unit && yy < rows; yy++) for (int xx = x; xx < x + unit && xx < cols; xx++) {
+                        extra[yy * cols + xx] = (byte) (XL0 + k % 4);
+                    }
+                }
+                break;
+            case Festivals.CNY:
+                for (int k = 0; k < 2; k++) {
+                    if ((festMask & (1 << k)) == 0) continue;
+                    int hx = lanX[k], hy = lanY[k] + 1;
+                    int cord = 3 * unit;
+                    for (int y = hy; y < hy + cord && y < rows; y++) if (hx >= 0 && hx < cols && y >= 0) extra[y * cols + hx] = (byte) NEST1;
+                    stamp(LANTERN, hx - LANTERN.w * unit / 2, hy + cord);
+                }
+                break;
+            case Festivals.MERDEKA:
+            case Festivals.MSIA: {
+                int gy = groundY[poleX];
+                int h = Math.round(48 * sc), top = gy - h;
+                for (int y = top; y < gy; y++) extra[y * cols + poleX] = (byte) POLE;
+                for (int y = top - 1; y <= top; y++) for (int x = poleX; x <= poleX + 1; x++) if (x < cols && y >= 0) extra[y * cols + x] = (byte) GOLD;
+                if (festShown < 2) break;
+                int step = festShown - 2; // 0..4: from low on the pole to the top
+                int hi = top + 2, lo = gy - FLAG_H - 6;
+                int fy = lo + (hi - lo) * step / 4;
+                for (int r = 0; r < FLAG_H; r++) for (int q = 0; q < FLAG_W; q++) {
+                    int x = poleX + flagDir * (1 + q), y = fy + r;
+                    if (x < 0 || x >= cols || y < 0 || y >= rows) continue;
+                    extra[y * cols + x] = (byte) flagCell(q, r);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    /** The Jalur Gemilang, FLAG_W x FLAG_H, q from the hoist: 14 stripes, the canton with the crescent and star. */
+    private static final int FLAG_W = 28, FLAG_H = 14;
+    private static final String[] CANTON = {
+            "..............",
+            "...YY...Y.Y.Y.",
+            "..YY.....YYY..",
+            "..Y.....YYYYY.",
+            "..Y......YYY..",
+            "..YY....Y.Y.Y.",
+            "...YY.........",
+            "..............",
+    };
+
+    private static int flagCell(int q, int r) {
+        if (r < CANTON.length && q < CANTON[0].length()) return CANTON[r].charAt(q) == 'Y' ? FL_YEL : FL_BLUE;
+        return r % 2 == 0 ? FL_RED : FL_WHITE;
     }
 
     /** A fork low in the crown for the nest: thick enough, away from the digits if it can be. */
@@ -1237,26 +1633,34 @@ final class GardenScene {
             if (sDepth[k] < 1 || sDepth[k] > 2) continue;
             if (k + 1 < nSeg && sPar[k + 1] == k && sDepth[k + 1] == sDepth[k]) continue; // mid-limb
             float x = sX1[k], y = sY1[k];
-            // The clock's whole area (whatever the digits are), so the nest stays on one fork
-            // all day and the same after a restart.
-            int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));
-            int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H));
-            int top = rows / 2 - PixelFont.H * st - 6 * unit;
-            int bottom = rows / 2 + Math.round(rows * 0.06f) + PixelFont.H * sd + unit;
-            boolean onText = y + unit >= top && y - 4 * unit <= bottom
-                    && x + 5 * unit >= cols * 0.15f && x - 5 * unit <= cols * 0.85f;
+            boolean onText = onClock(x - 5 * unit, y - 4 * unit, x + 5 * unit, y + unit);
             float score = sTh[k] - (onText ? 100 : 0) - sT1[k] / 2000f;
             if (score > bestScore) { bestScore = score; best = k; }
         }
         return best;
     }
 
-    private void stamp(Sprite s, int x, int y) {
+    /**
+     * True if the box overlaps the clock's whole area (whatever the digits are), so things
+     * placed by it stay put all day and the same after a restart.
+     */
+    private boolean onClock(float x0, float y0, float x1, float y1) {
+        int st = Math.max(1, Math.round(rows * 0.2f / PixelFont.H));
+        int sd = Math.max(1, Math.round(rows * 0.075f / PixelFont.H));
+        int top = rows / 2 - PixelFont.H * st - 6 * unit;
+        int bottom = rows / 2 + Math.round(rows * 0.06f) + PixelFont.H * sd + unit;
+        return y1 >= top && y0 <= bottom && x1 >= cols * 0.15f && x0 <= cols * 0.85f;
+    }
+
+    private void stamp(Sprite s, int x, int y) { stamp(s, x, y, -1, -1); }
+
+    /** Stamps a sprite into the still layer, with palette entry `from` swapped for `to`. */
+    private void stamp(Sprite s, int x, int y, int from, int to) {
         for (int sy = 0; sy < s.h * unit; sy++) for (int sx = 0; sx < s.w * unit; sx++) {
             int pi = s.at(sx / unit, sy / unit, false);
             int X = x + sx, Y = y + sy;
             if (pi < 0 || X < 0 || Y < 0 || X >= cols || Y >= rows) continue;
-            extra[Y * cols + X] = (byte) pi;
+            extra[Y * cols + X] = (byte) (pi == from ? to : pi);
         }
     }
 
@@ -1276,15 +1680,8 @@ final class GardenScene {
             int s = Math.max(1, unit);
             int w = PixelFont.width(msg) * s;
             int top = Math.round(rows * 0.035f);
-            int left = Math.max(0, (cols - w) / 2);
-            List<Integer> cells = new ArrayList<>();
-            int x = left;
-            for (int k = 0; k < msg.length(); k++) {
-                for (int i : PixelFont.cells(msg.charAt(k), x, top, s, cols, rows)) cells.add(i);
-                x += PixelFont.advance(msg.charAt(k), s);
-            }
-            noteCells = new int[cells.size()];
-            for (int k = 0; k < noteCells.length; k++) noteCells[k] = cells.get(k);
+            int left = TypedLine.centred(msg, s, cols);
+            noteChars = TypedLine.cells(msg, left, top, s, cols, rows);
             noteX0 = left; noteY0 = top; noteW = Math.min(cols, w + s); noteH = PixelFont.H * s;
         }
         if (birdStart >= 0 && t - birdStart > BIRD_MS) birdStart = -1;
@@ -1368,4 +1765,67 @@ final class GardenScene {
             "g.g",
             ".g.",
             "sss");
+
+    /** A shrub's stages: sprout, seedling, young plant, bush, in bud, in flower. */
+    private static final String SK = "gldsbfc";
+    private static final int[] SI = {LEAF0 + 1, LEAF0 + 2, LEAF0, BARK1, BUD, SF0, CENTER};
+    static final Sprite[] SHRUB = {
+            new Sprite(SK, SI,
+                    "g.g",
+                    ".g."),
+            new Sprite(SK, SI,
+                    ".l.l.",
+                    "..g..",
+                    "lgg..",
+                    "..g.."),
+            new Sprite(SK, SI,
+                    "...l...",
+                    ".l.gl..",
+                    ".lglgl.",
+                    "lggdggl",
+                    "..dsd.."),
+            new Sprite(SK, SI,
+                    "...lll...",
+                    ".llglgll.",
+                    "lglgglglg",
+                    "gdgggdggd",
+                    ".ddgsgdd."),
+            new Sprite(SK, SI,
+                    "...lbl...",
+                    ".blglglb.",
+                    "lglgblglg",
+                    "gdgggdggd",
+                    ".ddgsgdd."),
+            new Sprite(SK, SI,
+                    "..f.l.f..",
+                    ".fcflgfcf",
+                    "lgflgflgf",
+                    "gdgggdgfd",
+                    ".ddgsgdd."),
+    };
+    /** Hari Raya: a pelita, an oil lamp on a bamboo pole. */
+    static final Sprite PELITA = new Sprite("yotb", new int[]{FLAME, FLAME_CORE, BAMBOO_D, BAMBOO},
+            ".y.",
+            "yoy",
+            ".t.",
+            "ttt",
+            ".b.",
+            ".t.",
+            ".b.",
+            ".b.");
+    /** Deepavali: a clay diya. */
+    static final Sprite DIYA = new Sprite("yocC", new int[]{FLAME, FLAME_CORE, CLAY_D, CLAY},
+            "..y..",
+            ".yoy.",
+            "cCCCc",
+            ".CCC.");
+    /** Chinese New Year: a red lantern. */
+    static final Sprite LANTERN = new Sprite("grh", new int[]{GOLD, LANT, LANT_HI},
+            ".ggg.",
+            "rrrrr",
+            "rhrrr",
+            "rhrrr",
+            "rrrrr",
+            ".ggg.",
+            "..g..");
 }

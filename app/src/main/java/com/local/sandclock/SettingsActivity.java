@@ -152,26 +152,19 @@ public class SettingsActivity extends Activity {
         list.addView(status);
 
         addHeader(list, "Scenes");
-        // Scenes: every combination of the scene bits (1 ant farm, 2 ocean, 4 garden), all first.
-        addRow(list, new Row("Scenes") {
-            final int[] options = {7, 3, 5, 6, 1, 2, 4};
-            String value() {
-                StringBuilder b = new StringBuilder();
-                int n = 0;
-                for (int i = 0; i < SceneView.NAMES.length; i++) {
-                    if ((prefs.scenes & (1 << i)) == 0) continue;
-                    if (n++ > 0) b.append(" + ");
-                    b.append(SceneView.NAMES[i]);
+        // Each scene on or off in the daily rotation (at least one stays on).
+        for (int k = 0; k < SceneView.NAMES.length; k++) {
+            final int bit = 1 << k, id = k;
+            addRow(list, new Row(SceneView.NAMES[k] + " in the rotation") {
+                String value() { return (prefs.scenes & bit) != 0 ? "On" : "Off"; }
+                void step(int d) {
+                    int next = prefs.scenes ^ bit;
+                    if (next == 0) return; // keep one scene
+                    prefs.scenes = next;
+                    if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.today(prefs));
                 }
-                return n == 1 ? b + " only" : b + " (one a day)";
-            }
-            void step(int d) {
-                int k = 0;
-                for (int i = 0; i < options.length; i++) if (options[i] == prefs.scenes) k = i;
-                prefs.scenes = options[wrap(k + d, options.length)];
-                if ((prefs.scenes & (1 << previewScene)) == 0) showPreview(SceneView.today(prefs));
-            }
-        });
+            });
+        }
         addRow(list, new Row("Preview shows") {
             String value() { return SceneView.NAMES[previewScene]; }
             void step(int d) { showPreview(wrap(previewScene + d, SceneView.NAMES.length)); }
@@ -204,6 +197,14 @@ public class SettingsActivity extends Activity {
                 for (int i = 0; i < Prefs.ANIM_ORDER.length; i++) if (Prefs.ANIM_ORDER[i] == prefs.anim) k = i;
                 prefs.anim = Prefs.ANIM_ORDER[wrap(k + d, Prefs.ANIM_ORDER.length)];
             }
+        });
+        addRow(list, new Row("Afternoon storms") {
+            String value() { return prefs.kampungWeather ? "On (Garden, Kampung)" : "Off"; }
+            void step(int d) { prefs.kampungWeather = !prefs.kampungWeather; }
+        });
+        addRow(list, new Row("Festival days") {
+            String value() { return prefs.festivals ? "On (all scenes)" : "Off"; }
+            void step(int d) { prefs.festivals = !prefs.festivals; }
         });
         addRow(list, new Row("Evening warmth") {
             String value() {
@@ -244,7 +245,7 @@ public class SettingsActivity extends Activity {
             String value() { return prefs.pourIn ? "On" : "Off"; }
             void step(int d) { prefs.pourIn = !prefs.pourIn; }
         }));
-        addRow(list, scene(SceneView.ANTS, new Row("Rain before midnight") {
+        addRow(list, scene(SceneView.ANTS, new Row("Flood before midnight") {
             String value() { return Prefs.VACUUM[prefs.vacuum]; }
             void step(int d) { prefs.vacuum = wrap(prefs.vacuum + d, Prefs.VACUUM.length); }
         }));
@@ -273,6 +274,19 @@ public class SettingsActivity extends Activity {
         addRow(list, scene(SceneView.GARDEN, new Row("Autumn before midnight") {
             String value() { return Prefs.VACUUM[prefs.gardenAutumn]; }
             void step(int d) { prefs.gardenAutumn = wrap(prefs.gardenAutumn + d, Prefs.VACUUM.length); }
+        }));
+        addHeader(list, "Kampung");
+        addRow(list, scene(SceneView.KAMPUNG, new Row("Little people") {
+            String value() { return prefs.kampungPeople ? "On" : "Off (less power)"; }
+            void step(int d) { prefs.kampungPeople = !prefs.kampungPeople; }
+        }));
+        addRow(list, scene(SceneView.KAMPUNG, new Row("Build up at start") {
+            String value() { return prefs.kampungGrowIn ? "On" : "Off"; }
+            void step(int d) { prefs.kampungGrowIn = !prefs.kampungGrowIn; }
+        }));
+        addRow(list, scene(SceneView.KAMPUNG, new Row("Giant biawak before midnight") {
+            String value() { return Prefs.VACUUM[prefs.kampungRampage]; }
+            void step(int d) { prefs.kampungRampage = wrap(prefs.kampungRampage + d, Prefs.VACUUM.length); }
         }));
         addHeader(list, "Night");
         addRow(list, new Row("Night schedule") {

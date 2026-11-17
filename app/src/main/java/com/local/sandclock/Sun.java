@@ -1,7 +1,6 @@
 package com.local.sandclock;
 
 import java.util.Calendar;
-import java.util.TimeZone;
 
 /** Offline sunrise/sunset (NOAA approximation) for evening warmth. */
 final class Sun {
@@ -13,8 +12,23 @@ final class Sun {
             {2.189, 102.250}, {3.817, 103.326}, {6.125, 102.238}, {5.980, 116.073},
             {1.553, 110.359}, {1.352, 103.820}};
 
-    /** {sunrise, sunset} in local minutes of the day for the given city and date. */
+    private static long timesKey = Long.MIN_VALUE;
+    private static int[] timesVal;
+
+    /**
+     * {sunrise, sunset} in local minutes of the day for the given city and date. Cached: the
+     * answer only changes once a day (scenes ask every frame).
+     */
     static int[] times(int city, Calendar day) {
+        int offsetMin = (day.get(Calendar.ZONE_OFFSET) + day.get(Calendar.DST_OFFSET)) / 60_000;
+        long key = ((long) city * 10_000_000L + day.get(Calendar.YEAR) * 1000L + day.get(Calendar.DAY_OF_YEAR)) * 4096 + offsetMin + 2048;
+        if (key == timesKey && timesVal != null) return timesVal;
+        timesVal = compute(city, day, offsetMin);
+        timesKey = key;
+        return timesVal;
+    }
+
+    private static int[] compute(int city, Calendar day, int offset) {
         double lat = Math.toRadians(LAT_LON[city][0]);
         double lon = LAT_LON[city][1];
         double g = 2 * Math.PI / 365.0 * (day.get(Calendar.DAY_OF_YEAR) - 1 + 0.5);
@@ -26,7 +40,6 @@ final class Sun {
         double cosHa = Math.cos(Math.toRadians(90.833)) / (Math.cos(lat) * Math.cos(decl))
                 - Math.tan(lat) * Math.tan(decl);
         double ha = Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, cosHa))));
-        int offset = TimeZone.getDefault().getOffset(day.getTimeInMillis()) / 60_000;
         int rise = (int) Math.round(720 - 4 * (lon + ha) - eqTime) + offset;
         int set = (int) Math.round(720 - 4 * (lon - ha) - eqTime) + offset;
         return new int[]{((rise % 1440) + 1440) % 1440, ((set % 1440) + 1440) % 1440};
@@ -40,8 +53,19 @@ final class Sun {
     }
 
     /** 0 in daytime, easing to 1 from 30 min before sunset to 60 min after; back to 0 after sunrise. */
+    private static long warmKey = Long.MIN_VALUE;
+    private static float warmVal;
+
     static float warmth(int city, Calendar now) {
         if (city <= 0) return 0f;
+        long key = now.getTimeInMillis() / 60_000 * 64 + city;   // changes once a minute
+        if (key == warmKey) return warmVal;
+        warmKey = key;
+        warmVal = warmthNow(city, now);
+        return warmVal;
+    }
+
+    private static float warmthNow(int city, Calendar now) {
         int m = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
         int[] t = times(city, now);
         int rise = t[0], set = t[1];

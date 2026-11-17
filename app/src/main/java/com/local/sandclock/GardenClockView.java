@@ -136,6 +136,7 @@ public class GardenClockView extends SceneView {
         cell = Math.max(1, Math.round(h / (float) GRID_ROWS));
         int cols = (int) Math.ceil(w / cell), rows = (int) Math.ceil(h / cell);
         scene = new GardenScene(cols, rows, dayKey(c), prefs);
+        midnightAt = -1;
         if (picture == null || picture.getWidth() != cols || picture.getHeight() != rows) {
             picture = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
             textLayer = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888);
@@ -212,7 +213,8 @@ public class GardenClockView extends SceneView {
         } else if (prefs.anim == Prefs.ANIM_OFF) {
             delay = 1000 - now % 1000 + 5; // the ladybug ticks once a second
         } else if (scene.busy()) {
-            delay = frameMs(); // petals, leaves, the bee, grow-in, autumn
+            // Petals, leaves, the bee, grow-in, autumn; rain alone is fine at ~9 fps.
+            delay = scene.rainOnly() ? Math.max(frameMs(), 110) : frameMs();
         } else if (scene.moving()) {
             // The bird needs 8 fps while it crosses; the ladybug (~2.5 cells a second) and the
             // slow fireflies are fine at 4 fps.

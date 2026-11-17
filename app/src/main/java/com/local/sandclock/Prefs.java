@@ -47,11 +47,21 @@ final class Prefs {
     boolean gardenCritters = true;
     /** Garden: when the screensaver starts, the tree grows quickly to today's size. */
     boolean gardenGrowIn = true;
+    /** Kampung: minutes of the giant biawak before midnight (index into VACUUM; 0 = at midnight). */
+    int kampungRampage = 3;
+    /** Kampung: the little people (off: only buildings, the train and the biawak). */
+    boolean kampungPeople = true;
+    /** Every scene: small decorations (and the kampung's fireworks) on Malaysian festival days. */
+    boolean festivals = true;
+    /** Kampung: the odd afternoon thunderstorm. */
+    boolean kampungWeather = true;
+    /** Kampung: when the screensaver starts, the town builds up quickly to the time of day. */
+    boolean kampungGrowIn = true;
     static final String[] NIGHT_STYLE = {"Black screen", "Dim clock"};
 
     static final String[] STYLES = {"Black", "Dark", "Glowing"};
-    /** Scenes to pick from, a bit per SceneView scene (1 = ant farm, 2 = ocean, 4 = garden). */
-    int scenes = 7;
+    /** Scenes to pick from, a bit per SceneView scene (1 ant farm, 2 ocean, 4 garden, 8 kampung). */
+    int scenes = 15;
     int style = 0;
     /** Where grains fall from, % across the top of the screen, or DROP_RANDOM. */
     int dropPos = 50;
@@ -88,11 +98,14 @@ final class Prefs {
         SharedPreferences s = sp(c);
         Prefs p = new Prefs();
         p.style = clamp(s.getInt("style", 0), STYLES.length);
-        // "scenes3" since the Garden: older saves get the Garden added to their choice.
-        int sc = s.getInt("scenes3", -1);
-        if (sc < 0) sc = (s.getInt("scenes", 3) & 3) | 4;
-        p.scenes = sc & 7;
-        if (p.scenes == 0) p.scenes = 7;
+        // "scenes4" since the Kampung; older saves get the newer scenes added to their choice.
+        int sc = s.getInt("scenes4", -1);
+        if (sc < 0) {
+            int s3 = s.getInt("scenes3", -1);
+            sc = (s3 >= 0 ? s3 & 7 : (s.getInt("scenes", 3) & 3) | 4) | 8;
+        }
+        p.scenes = sc & 15;
+        if (p.scenes == 0) p.scenes = 15;
         // Outside 15..85 % the pile can't hold a full day before reaching the top.
         int dp = s.getInt("dropPos", 50);
         p.dropPos = dp == DROP_RANDOM ? DROP_RANDOM
@@ -110,6 +123,11 @@ final class Prefs {
         p.gardenAutumn = clamp(s.getInt("gardenAutumn", 3), VACUUM.length);
         p.gardenCritters = s.getBoolean("gardenCritters", true);
         p.gardenGrowIn = s.getBoolean("gardenGrowIn", true);
+        p.kampungRampage = clamp(s.getInt("kampungRampage", 3), VACUUM.length);
+        p.kampungPeople = s.getBoolean("kampungPeople", true);
+        p.festivals = s.getBoolean("festivals", s.getBoolean("kampungFestivals", true));
+        p.kampungWeather = s.getBoolean("kampungWeather", true);
+        p.kampungGrowIn = s.getBoolean("kampungGrowIn", true);
         p.sandLayers = s.getBoolean("sandLayers", true);
         p.sunMoon = s.getBoolean("sunMoon", true);
         p.use24h = s.getBoolean("use24h", DateFormat.is24HourFormat(c));
@@ -128,7 +146,7 @@ final class Prefs {
     void save(Context c) {
         sp(c).edit()
                 .putInt("style", style)
-                .putInt("scenes3", scenes)
+                .putInt("scenes4", scenes)
                 .putInt("dropPos", dropPos)
                 .putInt("sway", sway)
                 .putInt("theme", theme)
@@ -143,6 +161,11 @@ final class Prefs {
                 .putInt("gardenAutumn", gardenAutumn)
                 .putBoolean("gardenCritters", gardenCritters)
                 .putBoolean("gardenGrowIn", gardenGrowIn)
+                .putInt("kampungRampage", kampungRampage)
+                .putBoolean("kampungPeople", kampungPeople)
+                .putBoolean("festivals", festivals)
+                .putBoolean("kampungWeather", kampungWeather)
+                .putBoolean("kampungGrowIn", kampungGrowIn)
                 .putBoolean("sandLayers", sandLayers)
                 .putBoolean("sunMoon", sunMoon)
                 .putBoolean("use24h", use24h)
@@ -158,7 +181,7 @@ final class Prefs {
                 .apply();
     }
 
-    static final int SCENE_COUNT = 3; // bits of `scenes`: SceneView.ANTS, OCEAN, GARDEN
+    static final int SCENE_COUNT = 4; // bits of `scenes`: SceneView.ANTS, OCEAN, GARDEN, KAMPUNG
 
     /**
      * Today's scene, from the ones chosen. Days go in blocks of as many days as there are
