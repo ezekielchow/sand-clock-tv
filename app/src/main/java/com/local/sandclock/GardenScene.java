@@ -66,6 +66,7 @@ final class GardenScene {
     private final short[] leafCl;       // which cluster a leaf pixel belongs to (autumn turns them together)
     private int[] leafIdx = new int[0];
     private int[] clusterT = new int[0];
+    private int[] clusterSeg = new int[0]; // the limb a leaf cluster grows on
     final int[] treeBox = new int[4];   // x, y, w, h of the whole day's tree
     // Segments of the skeleton (screen units), for the ladybug and the nest.
     private float[] sX0, sY0, sX1, sY1;
@@ -179,6 +180,7 @@ final class GardenScene {
         extra = new byte[n];
         sky = new int[n];
         star = new byte[n];
+        shade = new byte[cols];
         barkT = new short[n];
         leafT = new short[n];
         bark = new byte[n];
@@ -215,6 +217,7 @@ final class GardenScene {
         dc.set(Calendar.HOUR_OF_DAY, 12);
         fest = Festivals.of(prefs, dc);
         planDecor(new Random(day * 4243L + 3));
+        planLife(new Random(day * 6151L + 17));
     }
 
     /**
@@ -408,6 +411,8 @@ final class GardenScene {
         }
         // Leaf clusters: shortly after their twig, growing outwards; a few gaps to see through.
         clusterT = new int[clus.size()];
+        clusterSeg = new int[clus.size()];
+        for (int k = 0; k < clus.size(); k++) clusterSeg[k] = (int) clus.get(k)[3];
         int[] li = new int[cols * rows / 4];
         int nl = 0;
         for (int k = 0; k < clus.size(); k++) {
@@ -486,7 +491,12 @@ final class GardenScene {
             FLY = 40, FLY_GLOW = 41, NOTE = 42, SPROUT = 43, RAIN = 44, FLASH = 45, PUDDLE = 46, PUDDLE_HI = 47,
             RB0 = 48, FLAME = 54, FLAME_CORE = 55, BAMBOO = 56, BAMBOO_D = 57, CLAY = 58, CLAY_D = 59, XL0 = 60,
             LANT = 64, LANT_HI = 65, GOLD = 66, POLE = 67, FL_RED = 68, FL_WHITE = 69, FL_BLUE = 70, FL_YEL = 71,
-            SF0 = 72, N_PAL = 75;
+            SF0 = 72, SHADE0 = 75, CLOUD = 85, CLOUD_SH = 86, MIST = 87, BLOS = 88, FRUIT0 = 89,
+            SQ_BODY = 93, SQ_TAIL = 94, SQ_BELLY = 95, SQ_STRIPE = 96, SQ_EYE = 97, SQ_FRUIT = 98,
+            BUL_BACK = 99, BUL_HEAD = 100, BUL_BELLY = 101, BUL_VENT = 102, BF0 = 103, BF_K = 105,
+            SN_SHELL = 106, SN_SHELL_D = 107, SN_BODY = 108, SN_TRAIL = 109, CAT0 = 110, CAT1 = 111,
+            CAT_EYE = 112, OWL = 113, OWL_L = 114, OWL_EYE = 115, DF_BODY = 116, DF_WING = 117,
+            DF_HEAD = 118, N_PAL = 119;
     /** The rainbow's bands, outside in. */
     private static final int[] RAINBOW = {0xE05050, 0xF09040, 0xF0D850, 0x70C060, 0x5090E0, 0x9070D0};
     private final int[] pal = new int[N_PAL];
@@ -578,6 +588,7 @@ final class GardenScene {
         pal[SF0] = prefs.color(0xE83040, tf);      // hibiscus red
         pal[SF0 + 1] = prefs.color(0xE860B0, tf);  // bougainvillea pink
         pal[SF0 + 2] = prefs.color(0xF4D040, tf);  // allamanda yellow
+        lifeColors(st, sf, tf, gf);
         for (int i = 0; i < textPx.length; i++) textPx[i] = text[i] != 0 ? pal[TEXT] : 0;
         textChanged = true;
         skyKey = Integer.MIN_VALUE;
@@ -602,6 +613,8 @@ final class GardenScene {
         if (text[i] != 0) return pal[TEXT];
         if (planter[i] != 0) return pal[PLANTER];
         if (flower[i] != 0) return pal[flower[i]];
+        int sn = snailAt(x, y);
+        if (sn >= 0) return pal[sn];
         if (extra[i] != 0) return pal[extra[i]];
         int lt = leafT[i];
         if (lt <= g) {
@@ -613,11 +626,21 @@ final class GardenScene {
         if (y >= gy) {
             int d = y - gy;
             if (Math.abs(x - baseX) <= puddleHalf(d)) return pal[(hash(x * 7 + d) & 15) == 0 ? PUDDLE_HI : PUDDLE];
+            if (d == 0 && trailAt(x)) return pal[SN_TRAIL];
             int h = hash(i);
-            if (d < 2 * unit) return pal[GRASS0 + ((h >>> 30) == 0 ? 1 : 0)];
-            return pal[SOIL0 + ((h >>> 28) % 3)];
+            int sh = shade[x] == 0 ? -1 : SHADE0 + (shade[x] - 1) * 5;
+            if (d < 2 * unit) {
+                int k = (h >>> 30) == 0 ? 1 : 0;
+                return pal[sh < 0 ? GRASS0 + k : sh + k];
+            }
+            int k = (h >>> 28) % 3;
+            return pal[sh < 0 ? SOIL0 + k : sh + 2 + k];
         }
-        if (y >= gy - blade[x] && (x & 1) == 0 && Math.abs(x - baseX) > puddleHalf(0)) return pal[GRASS0 + 1];
+        if (y >= gy - blade[x] && (x & 1) == 0 && Math.abs(x - baseX) > puddleHalf(0)) {
+            return pal[shade[x] == 0 ? GRASS0 + 1 : SHADE0 + (shade[x] - 1) * 5 + 1];
+        }
+        int cl = cloudAt(x, y);
+        if (cl != 0) return pal[cl];
         if (sky[i] != 0) return sky[i];
         if (rainbow > 0) {
             int dx = x - rbX, dy = y - rbY;
@@ -664,15 +687,27 @@ final class GardenScene {
     }
 
     private void composeAll() {
-        for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) base[y * cols + x] = baseColor(x, y);
+        for (int y = 0; y < rows; y++) for (int x = 0; x < cols; x++) base[y * cols + x] = stillColor(x, y);
         fullDirty = true;
     }
 
     private void composeRect(int x0, int y0, int w, int h) {
         int x1 = Math.min(cols, x0 + w), y1 = Math.min(rows, y0 + h);
         for (int y = Math.max(0, y0); y < y1; y++) for (int x = Math.max(0, x0); x < x1; x++) {
-            base[y * cols + x] = baseColor(x, y);
+            base[y * cols + x] = stillColor(x, y);
         }
+    }
+
+    /** A still cell, with the morning mist over the lower garden (not over the clock). */
+    private int stillColor(int x, int y) {
+        int c = baseColor(x, y);
+        if (mistLevel > 0 && y > mistTop) {
+            int i = y * cols + x;
+            if (text[i] != 0 || planter[i] != 0) return c;
+            float a = mistLevel / 5f * 0.55f * Math.min(1f, (y - mistTop) / (float) Math.max(1, groundTop - mistTop));
+            c = mixArgb(c, pal[MIST], a);
+        }
+        return c;
     }
 
     // ---- time ----
@@ -961,7 +996,7 @@ final class GardenScene {
             dY[k] += 3.2f * sc * ticks;
             dX[k] -= 0.6f * sc * ticks;
             int x = Math.round(dX[k]), y = Math.round(dY[k]);
-            boolean land = x < 0 || (x < cols && (y >= groundY[x] || (y >= 0 && base[y * cols + x] != skyC)));
+            boolean land = x < 0 || (x < cols && (y >= groundY[x] || (y >= 0 && base[y * cols + x] != skyC && cloudAt(x, y) == 0)));
             if (!land) continue;
             if (k < want) { dX[k] = rnd.nextInt(cols + Math.round(20 * sc)); dY[k] = -rnd.nextInt(Math.max(1, Math.round(30 * sc))); }
             else { nDrops--; dX[k] = dX[nDrops]; dY[k] = dY[nDrops]; k--; }
@@ -1021,6 +1056,7 @@ final class GardenScene {
      * animate = false: no particles, bee, birds or fireflies; the ladybug ticks.
      */
     void update(Calendar c, long t, boolean animate, boolean vacuumAllowed) {
+        long oldGrow = growStart;
         int oldPuddle = puddle;
         float oldStorm = storm;
         weather(c, animate);
@@ -1069,6 +1105,19 @@ final class GardenScene {
             recompose = true;
         }
         if (growStart < 0 && demoStart < 0 && dropStart < 0) lastG = g;
+        // Once a minute (and when the grow-in ends): the tree's shadow and the morning mist.
+        long msDay = msOfDay(c);
+        if (minute != lastLifeMinute || gap || (oldGrow >= 0 && growStart < 0)) {
+            if (animate && !gap && lastLifeMinute >= 0) {
+                for (int k = 0; k < nFruit; k++) if (frDrop[k] == minute && aStep == 0) {
+                    for (int n = 0; n < 3; n++) addParticle(frX[k] + n % 2, frY[k] + n / 2, 0, 0.3f, FRUIT0 + 3, n);
+                }
+            }
+            lastLifeMinute = minute;
+            if (updateShadow(c)) recompose = true;
+            if (updateMist(c)) recompose = true;
+        }
+        if (stepVisitors(c, t, msDay, animate, gap)) lastExtrasMinute = -1;   // a fruit was picked
         if (minute != lastExtrasMinute || treeChanged) {
             lastExtrasMinute = minute;
             if (buildExtras(c)) recompose = true;
@@ -1077,6 +1126,12 @@ final class GardenScene {
             long dur = demoStart >= 0 ? DEMO_MS : dropStart >= 0 ? DROP_MS
                     : Prefs.VACUUM_MIN[prefs.gardenAutumn] * 60_000L;
             dropLeaves(oldA, aStep, dur);
+        }
+        // Clouds and the snail creep a cell every few seconds; while nothing is animated (night,
+        // animation off) they wait for the minute's recompose instead.
+        if (animate || recompose) {
+            moveClouds(msDay, recompose);
+            moveSnail(msDay, recompose);
         }
         if (recompose) {
             composeAll();
@@ -1317,6 +1372,8 @@ final class GardenScene {
             addCur(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
         }
 
+        placeLife(t, animate);
+
         if (nPrev + nCur > dirty.length) fullDirty = true;
         if (fullDirty || flash || flashPrev) {
             System.arraycopy(base, 0, px, 0, px.length);
@@ -1344,6 +1401,7 @@ final class GardenScene {
             }
         }
 
+        drawLife(t);
         if (bug) drawSprite(LADYBUG, bugX, bugY, !bugRight, true);
         for (int k = 0; k < nf; k++) {
             if (!fon[k]) continue;
@@ -1407,11 +1465,11 @@ final class GardenScene {
     /** True while something moves slowly (ladybug, fireflies, the bird): 8 fps is enough. */
     boolean moving() {
         // The stats line types in even without the bird (critters off), so it counts too.
-        return (prefs.gardenCritters && (nPath > 1 || afterSunset)) || birdStart >= 0;
+        return (prefs.gardenCritters && (nPath > 1 || afterSunset || lifeMoving)) || birdStart >= 0;
     }
 
     /** The bird crosses fast (about 12 cells a second): it needs 8 fps; the rest is slow. */
-    boolean fastMoving() { return prefs.gardenCritters && birdStart >= 0; }
+    boolean fastMoving() { return prefs.gardenCritters && (birdStart >= 0 || lifeFast); }
 
     private void drawSprite(Sprite s, int x, int y, boolean flip, boolean behindText) {
         for (int sy = 0; sy < s.h * unit; sy++) {
@@ -1425,6 +1483,898 @@ final class GardenScene {
                 int i = yy * cols + xx;
                 if (behindText && (text[i] != 0 || planter[i] != 0)) continue;
                 px[i] = pal[pi];
+            }
+        }
+    }
+
+    // ---- more life: the tree's shadow, clouds, mist, fruit and visitors ----
+    //
+    // Power: the shadow, mist, fruit, owl, clouds and snail are part of the still layer. The
+    // shadow and mist change once a minute (with the minute's recompose); a cloud or the snail
+    // moves a cell every few seconds and only its own box is recomposed then. The butterflies,
+    // dragonflies and the cat move slowly enough for the 4 fps the ladybug already needs; only
+    // the squirrel's dashes and the bulbul's flights ask for 8 fps, a minute or two an hour.
+
+    private int lastLifeMinute = -1;
+    private boolean lifeMoving, lifeFast;     // something of these moving now (slow / fast)
+
+    /** Growth at minute m of the day (the tree's plan, for things planned ahead). */
+    private static int gAt(int m) { return m * G_FULL / 1440; }
+
+    private void planLife(Random r) {
+        planClouds(r);
+        mistDay = r.nextFloat() < 0.45f;
+        mistTop = groundTop - Math.round(rows * 0.3f);
+        planFruit(r);
+        planVisits(r);
+        catDay = r.nextFloat() < 0.6f;
+        catType = r.nextInt(3);
+        catFrom = 600 + r.nextInt(90);
+        catTo = 960 + r.nextInt(80);
+        planOwl();
+    }
+
+    private void lifeColors(int st, float sf, float tf, float gf) {
+        // The shadow: the ground's colours, darker (two steps, for a softer edge).
+        int[] gr = {GRASS0, GRASS0 + 1, SOIL0, SOIL0 + 1, SOIL0 + 2};
+        for (int l = 0; l < 2; l++) for (int k = 0; k < 5; k++) {
+            pal[SHADE0 + l * 5 + k] = mixArgb(pal[gr[k]], 0xFF080C06, l == 0 ? 0.22f : 0.42f);
+        }
+        float cf = st == 0 ? Math.min(1f, sf + 0.3f) : st == 1 ? 0.16f : 0.22f;
+        int cl = mixRgb(mixRgb(0xF4F6FA, 0x56607A, dusk), 0x585C64, storm * 0.85f);
+        pal[CLOUD] = prefs.color(cl, cf);
+        pal[CLOUD_SH] = prefs.color(mixRgb(cl, 0x7A84A0, 0.45f), cf);
+        pal[MIST] = prefs.color(0xDCE2E8, st == 0 ? 0.9f : st == 1 ? 0.35f : 0.45f);
+        pal[BLOS] = prefs.color(0xF6E0EA, tf);
+        int[] fr = fruitType == 0 ? new int[]{0x5A9A3A, 0xB8B83C, 0xE07A2A, 0xCC2A2A}
+                : new int[]{0x4E8A30, 0x9AB040, 0xE8C030, 0xF09030};
+        for (int k = 0; k < 4; k++) pal[FRUIT0 + k] = prefs.color(fr[k], tf);
+        pal[SQ_BODY] = prefs.color(0x7A5A3C, 1f);
+        pal[SQ_TAIL] = prefs.color(0x5E4630, 1f);
+        pal[SQ_BELLY] = prefs.color(0xC0602E, 1f);
+        pal[SQ_STRIPE] = prefs.color(0xE8DCC0, 1f);
+        pal[SQ_EYE] = prefs.color(0x101010, 1f);
+        pal[SQ_FRUIT] = pal[FRUIT0 + 3];
+        pal[BUL_BACK] = prefs.color(0x7A6A4E, 1f);
+        pal[BUL_HEAD] = prefs.color(0x2A2620, 1f);
+        pal[BUL_BELLY] = prefs.color(0xE8E2D2, 1f);
+        pal[BUL_VENT] = prefs.color(0xF2CC30, 1f);
+        pal[BF0] = prefs.color(0xF08A28, 1f);       // a common tiger
+        pal[BF0 + 1] = prefs.color(0xF4E070, 1f);   // a grass yellow
+        pal[BF_K] = prefs.color(0x1A1612, 1f);
+        pal[SN_SHELL] = prefs.color(0xC48A4A, gf + 0.25f);
+        pal[SN_SHELL_D] = prefs.color(0x7A4A26, gf + 0.25f);
+        pal[SN_BODY] = prefs.color(0xC8BCA0, gf + 0.25f);
+        pal[SN_TRAIL] = prefs.color(0xB8C4CC, gf + 0.15f);
+        int[][] cats = {{0xE0902A, 0xB0601A}, {0x2A2A2C, 0xF0F0EC}, {0x9A9690, 0x5E5A56}};
+        pal[CAT0] = prefs.color(cats[catType][0], 1f);
+        pal[CAT1] = prefs.color(cats[catType][1], 1f);
+        pal[CAT_EYE] = prefs.color(catType == 1 ? 0x8A8A80 : 0x2A2018, 1f);
+        pal[OWL] = prefs.color(0x6A5038, tf + 0.1f);
+        pal[OWL_L] = prefs.color(0xC8B08A, tf + 0.1f);
+        pal[OWL_EYE] = prefs.color(0xF0C020, 1f);
+        pal[DF_BODY] = prefs.color(0x2A7AC8, 1f);
+        pal[DF_WING] = prefs.color(0xD8EAF4, 0.75f);
+        pal[DF_HEAD] = prefs.color(0x1E5A3A, 1f);
+    }
+
+    // ---- the shadow: a sundial ----
+
+    private final byte[] shade;               // per column: 0 none, 1 light, 2 full shadow
+    private int shadeKey = Integer.MIN_VALUE;
+    private int shadeMid = -1;                // middle of the full shadow (-1: none)
+
+    /**
+     * The tree's shadow on the ground for the sun now: every grown pixel of it projected along
+     * the sun's rays (long and to the west in the morning, under the tree at noon, long to the
+     * east in the evening). None at night or under storm clouds. True if it changed.
+     */
+    private boolean updateShadow(Calendar c) {
+        int m = minuteOfDay(c);
+        int[] tt = SunMoon.times(prefs, c);
+        float p = (m - tt[0]) / (float) Math.max(1, tt[1] - tt[0]);
+        boolean on = p > 0.01f && p < 0.99f && storm < 0.5f && g > 0 && demoStart < 0 && dropStart < 0;
+        int key = on ? (m * 2 + (aStep > 0 ? 1 : 0)) * 20_000 + g : -1;
+        if (key == shadeKey) return false;
+        shadeKey = key;
+        java.util.Arrays.fill(shade, (byte) 0);
+        shadeMid = -1;
+        if (!on) return true;
+        double el = Math.PI * p;               // the sun's height (it rises on the left)
+        float lean = (float) Math.max(-2.4, Math.min(2.4, Math.cos(el) / Math.max(0.3, Math.sin(el)))) * 0.75f;
+        int[] cnt = new int[cols];
+        int x0 = treeBox[0], y0 = treeBox[1], x1 = x0 + treeBox[2], y1 = y0 + treeBox[3];
+        for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+            int i = y * cols + x;
+            if (!(barkT[i] <= g || (leafT[i] <= g && leafColor(i) >= 0))) continue;
+            int h = groundY[x] - y;
+            if (h < 0) continue;
+            int xs = x + Math.round(h * lean);
+            if (xs >= 0 && xs < cols) cnt[xs]++;
+        }
+        boolean low = p < 0.07f || p > 0.93f;  // faint near sunrise and sunset
+        long sum = 0, n = 0;
+        for (int x = 0; x < cols; x++) {
+            int lv = cnt[x] >= 3 ? 2 : cnt[x] >= 1 ? 1 : 0;
+            if (low) lv = Math.min(lv, 1);
+            shade[x] = (byte) lv;
+            if (cnt[x] >= 3) { sum += x; n++; }
+        }
+        for (int x = 1; x + 1 < cols; x++) if (shade[x] == 0 && shade[x - 1] > 0 && shade[x + 1] > 0) shade[x] = 1;
+        if (n > 0 && !low) shadeMid = (int) (sum / n);
+        return true;
+    }
+
+    // ---- clouds ----
+
+    private static final int MAX_CLOUDS = 4;
+    private int nClouds, windDir;
+    private final boolean[][] cMask = new boolean[MAX_CLOUDS][];
+    private final int[] cW = new int[MAX_CLOUDS], cH = new int[MAX_CLOUDS], cY = new int[MAX_CLOUDS],
+            cX = new int[MAX_CLOUDS], cPhase = new int[MAX_CLOUDS];
+    private final long[] cMsPerCell = new long[MAX_CLOUDS];
+
+    /** Two to four clouds a day, each crossing the sky in 20-40 minutes, all with the wind. */
+    private void planClouds(Random r) {
+        nClouds = 2 + r.nextInt(3);
+        windDir = r.nextBoolean() ? 1 : -1;
+        for (int k = 0; k < nClouds; k++) {
+            int w = Math.max(10, Math.round((34 + r.nextInt(40)) * sc)), h = Math.max(4, Math.round((9 + r.nextInt(6)) * sc));
+            boolean[] m = new boolean[w * h];
+            int nb = 3 + r.nextInt(3);
+            float[][] b = new float[nb][];
+            for (int j = 0; j < nb; j++) {
+                // Round puffs along a flat base, the middle ones biggest.
+                float mid = 1f - Math.abs(j - (nb - 1) / 2f) / Math.max(1f, nb / 2f);
+                float br = h * (0.3f + 0.25f * mid + 0.15f * r.nextFloat());
+                float bx = w * (0.16f + 0.68f * j / Math.max(1, nb - 1)) + (r.nextFloat() - 0.5f) * w * 0.06f;
+                b[j] = new float[]{bx, h - br * 0.85f, br};
+            }
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+                for (float[] q : b) {
+                    float dx = (x - q[0]) / (q[2] * 1.25f), dy = (y - q[1]) / q[2];
+                    if (dx * dx + dy * dy <= 1f) { m[y * w + x] = true; break; }
+                }
+            }
+            cMask[k] = m;
+            cW[k] = w;
+            cH[k] = h;
+            cY[k] = Math.round(rows * (0.11f + 0.27f * r.nextFloat()));
+            cMsPerCell[k] = Math.max(200, (20 + r.nextInt(20)) * 60_000L / (cols + w));
+            cPhase[k] = r.nextInt(cols + w);
+            cX[k] = Integer.MIN_VALUE;
+        }
+    }
+
+    private int cloudLeft(int k, long msDay) {
+        int span = cols + cW[k];
+        int pos = (int) ((msDay / cMsPerCell[k] + cPhase[k]) % span);
+        return windDir > 0 ? pos - cW[k] : cols - pos;
+    }
+
+    /** The cloud colour at (x, y), or 0. */
+    private int cloudAt(int x, int y) {
+        for (int k = 0; k < nClouds; k++) {
+            int dx = x - cX[k], dy = y - cY[k];
+            if (dx < 0 || dy < 0 || dx >= cW[k] || dy >= cH[k] || !cMask[k][dy * cW[k] + dx]) continue;
+            return dy >= cH[k] - Math.max(1, cH[k] / 4) ? CLOUD_SH : CLOUD;
+        }
+        return 0;
+    }
+
+    /** Clouds to now; where one moved, only its box is recomposed (unless all of it is). */
+    private void moveClouds(long msDay, boolean recompose) {
+        for (int k = 0; k < nClouds; k++) {
+            int nx = cloudLeft(k, msDay), old = cX[k];
+            if (nx == old) continue;
+            cX[k] = nx;
+            if (recompose || old == Integer.MIN_VALUE) continue;
+            int a = Math.min(old, nx), b = Math.max(old, nx) + cW[k];
+            composeRect(a, cY[k], b - a, cH[k]);
+            addCur(a, cY[k], b - a, cH[k]);
+        }
+    }
+
+    // ---- morning mist ----
+
+    private boolean mistDay;
+    private int mistLevel, mistTop;          // 0..5; the top of the mist
+
+    /** Some mornings a mist lies low over the garden from before dawn and lifts by mid-morning. */
+    private boolean updateMist(Calendar c) {
+        int lv = 0;
+        if (mistDay && demoStart < 0 && dropStart < 0) {
+            int m = minuteOfDay(c), rise = SunMoon.times(prefs, c)[0];
+            float f = m < rise - 120 || m > rise + 110 ? 0f : m < rise + 10 ? 1f : 1f - (m - rise - 10) / 100f;
+            lv = Math.round(Math.max(0f, f) * 5);
+        }
+        if (lv == mistLevel) return false;
+        mistLevel = lv;
+        return true;
+    }
+
+    // ---- fruit ----
+
+    private static final int MAX_FRUIT = 14, NEVER = 9999, NEVER_S = Integer.MAX_VALUE;
+    private int fruitType, nFruit;                // 0 rambutan, 1 mango
+    private final int[] frX = new int[MAX_FRUIT], frY = new int[MAX_FRUIT], frSeg = new int[MAX_FRUIT],
+            frBloom = new int[MAX_FRUIT], frSet = new int[MAX_FRUIT], frRipe = new int[MAX_FRUIT],
+            frEaten = new int[MAX_FRUIT], frDrop = new int[MAX_FRUIT], frRoll = new int[MAX_FRUIT];
+    private int takenFruit = -1;                  // picked by the squirrel on this visit
+    private int visitFruit = -1;                  // the fruit the squirrel out now has come for
+    private int lifeSec;                          // second of the day (for the fruit)
+
+    /**
+     * Fruit for the day (rambutan or mango): spots under the leaves grown by 17:00 (the crown
+     * fills in through the afternoon). Each blossoms half an hour or so after its leaves (from
+     * noon), sets fruit an hour later, and ripens over the next few hours (green, yellow,
+     * orange, red by evening). Some ripe ones drop; the squirrel takes others.
+     */
+    private void planFruit(Random r) {
+        fruitType = r.nextInt(2);
+        int g10 = gAt(1020);
+        List<Integer> cand = new ArrayList<>();
+        for (int i : leafIdx) {
+            int y = i / cols;
+            if (leafT[i] > g10 || y + 1 >= rows || y > groundTop - 14 * unit) continue;
+            if (leafT[i + cols] != NONE) continue;          // the underside of the leaves
+            cand.add(i);
+        }
+        java.util.Collections.shuffle(cand, r);
+        boolean[] behind = clockBoxes();
+        int gap = 8 * unit;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i : cand) {
+                if (nFruit >= (pass == 0 ? MAX_FRUIT : 6)) break;
+                int x = i % cols, y = i / cols + 1;
+                // Clear of the characters' boxes (whatever they show), unless that leaves too few.
+                if (pass == 0 && (behind[y * cols + x] || behind[Math.min(rows - 1, y + 4 * unit) * cols + x])) continue;
+                boolean near = false;
+                for (int k = 0; k < nFruit && !near; k++) near = Math.abs(frX[k] - x) < gap && Math.abs(frY[k] - y) < gap;
+                if (near) continue;
+                int k = nFruit++;
+                frX[k] = x;
+                frY[k] = y;
+                int cl = leafCl[i];
+                frSeg[k] = cl < clusterSeg.length ? clusterSeg[cl] : 0;
+                int leafMin = leafT[i] * 1440 / G_FULL;
+                frBloom[k] = Math.max(leafMin + 20 + r.nextInt(40), 720 + r.nextInt(60));
+                frSet[k] = frBloom[k] + 60 + r.nextInt(40);
+                frRipe[k] = frSet[k] + 150 + r.nextInt(90);
+                frEaten[k] = NEVER_S;           // second of the day the squirrel comes for it
+                frDrop[k] = r.nextFloat() < 0.35f ? Math.min(1430, frRipe[k] + 20 + r.nextInt(200)) : NEVER;
+                frRoll[k] = (r.nextInt(9) - 4) * unit;
+            }
+        }
+    }
+
+    /** Cells inside the clock's character boxes (as laid out for a couple of times today). */
+    private boolean[] clockBoxes() {
+        boolean[] m = new boolean[cols * rows];
+        int[][] times = {{18, 38}, {10, 51}};
+        for (int[] hm : times) {
+            Calendar c = Calendar.getInstance();
+            c.clear();
+            c.set(Calendar.YEAR, day / 1000);
+            c.set(Calendar.DAY_OF_YEAR, day % 1000);
+            c.set(Calendar.HOUR_OF_DAY, hm[0]);
+            c.set(Calendar.MINUTE, hm[1]);
+            for (ClockText.Slot sl : ClockText.layout(prefs, c, cols, rows)) {
+                int x0 = cols, y0 = rows, x1 = -1, y1 = -1;
+                for (int[] grp : new int[][]{sl.cells, sl.lids}) for (int i : grp) {
+                    x0 = Math.min(x0, i % cols); x1 = Math.max(x1, i % cols);
+                    y0 = Math.min(y0, i / cols); y1 = Math.max(y1, i / cols);
+                }
+                for (int y = Math.max(0, y0 - 2 * unit); y <= Math.min(rows - 1, y1 + unit); y++) {
+                    for (int x = Math.max(0, x0 - 2 * unit); x <= Math.min(cols - 1, x1 + 2 * unit); x++) m[y * cols + x] = true;
+                }
+            }
+        }
+        return m;
+    }
+
+    /** 0..3 from green to ripe. */
+    private int ripeness(int k, int m) {
+        float q = (m - frSet[k]) / (float) Math.max(1, frRipe[k] - frSet[k]);
+        return Math.max(0, Math.min(3, (int) (q * 4)));
+    }
+
+    // ---- visitors: the squirrel and the bulbul (planned for the day, so a restart agrees) ----
+
+    private static final int MAX_VISITS = 26;
+    private int nSq, nBul;
+    private final int[] sqStart = new int[MAX_VISITS], sqFruit = new int[MAX_VISITS], sqSeg = new int[MAX_VISITS];
+    private final boolean[] sqLeft = new boolean[MAX_VISITS];
+    private final int[] bulStart = new int[MAX_VISITS], bulSeg = new int[MAX_VISITS], bulStay = new int[MAX_VISITS];
+    private final boolean[] bulLeft = new boolean[MAX_VISITS];
+
+    /** A grown limb end for a visitor (depth from..to), clear of the clock if it can be; -1 none. */
+    private int pickLimb(Random r, int m, int from, int to) {
+        int gm = gAt(m);
+        int best = -1;
+        for (int tries = 0; tries < 60 && nSeg > 0; tries++) {
+            int k = r.nextInt(nSeg);
+            if (sDepth[k] < from || sDepth[k] > to || sT1[k] > gm) continue;
+            if (sY1[k] > groundTop - 20 * unit) continue;
+            best = k;
+            if (!onClock(sX1[k] - 6 * unit, sY1[k] - 8 * unit, sX1[k] + 6 * unit, sY1[k] + unit)) break;
+        }
+        return best;
+    }
+
+    /**
+     * From 07:00 to 19:00 (once the tree has limbs for them): the squirrel comes twice an hour
+     * (for ripe fruit if there is some), the bulbul twice an hour; clear of the bird at :45 and
+     * the bee at :50.
+     */
+    private void planVisits(Random r) {
+        for (int h = 7; h < 19; h++) {
+            for (int j = 0; j < 2 && nSq < MAX_VISITS; j++) {
+                int m = h * 60 + (j == 0 ? 2 + r.nextInt(14) : 24 + r.nextInt(14));
+                int fruit = -1;
+                int n = 0;
+                for (int k = 0; k < nFruit; k++) {
+                    if (ripeness(k, m) < 2 || frEaten[k] != NEVER_S || frDrop[k] <= m || sT1[frSeg[k]] > gAt(m)) continue;
+                    if (r.nextInt(++n) == 0) fruit = k;
+                }
+                int seg = fruit >= 0 ? frSeg[fruit] : pickLimb(r, m, 1, 4);
+                if (seg < 0) continue;
+                int k = nSq++;
+                sqStart[k] = m * 60 + r.nextInt(20);
+                if (fruit >= 0) { frEaten[fruit] = sqStart[k]; if (frDrop[fruit] > m) frDrop[fruit] = NEVER; }
+                sqFruit[k] = fruit;
+                sqSeg[k] = seg;
+                sqLeft[k] = r.nextBoolean();
+            }
+            for (int j = 0; j < 2 && nBul < MAX_VISITS; j++) {
+                int m = h * 60 + (j == 0 ? 10 + r.nextInt(10) : 31 + r.nextInt(10));
+                int seg = pickLimb(r, m, 2, MAX_DEPTH);
+                if (seg < 0) continue;
+                int k = nBul++;
+                bulStart[k] = m * 60 + r.nextInt(30);
+                bulSeg[k] = seg;
+                bulStay[k] = 30_000 + r.nextInt(40_000);
+                bulLeft[k] = r.nextBoolean();
+            }
+        }
+    }
+
+    // The squirrel's run: points (feet), the time it reaches each (ms from the visit's start), a pose.
+    private static final int SQ_RUN = 0, SQ_SIT = 1, SQ_CLIMB = 2, SQ_EAT = 3;
+    private float[] tkX = new float[256], tkY = new float[256];
+    private int[] tkT = new int[256];
+    private byte[] tkPose = new byte[256];
+    private int nTk, tkEat = -1, tkEatEnd = -1, curSq = -1;
+
+    private void tkAdd(float x, float y, int ms, int pose) {
+        if (nTk == tkX.length) {
+            int n = nTk * 2;
+            tkX = java.util.Arrays.copyOf(tkX, n); tkY = java.util.Arrays.copyOf(tkY, n);
+            tkT = java.util.Arrays.copyOf(tkT, n); tkPose = java.util.Arrays.copyOf(tkPose, n);
+        }
+        tkX[nTk] = x; tkY[nTk] = y; tkT[nTk] = ms; tkPose[nTk] = (byte) pose;
+        nTk++;
+    }
+
+    /** A leg from the last point to (x, y), `speed` cells a second, stopping every `every` cells. */
+    private void tkLeg(float x, float y, float speed, float every, int stopMs, int pose, int stopPose) {
+        float x0 = tkX[nTk - 1], y0 = tkY[nTk - 1];
+        int t = tkT[nTk - 1];
+        int steps = Math.max(1, Math.round((float) Math.hypot(x - x0, y - y0)));
+        float since = 0;
+        int dt = Math.round(1000 / speed);
+        for (int s = 1; s <= steps; s++) {
+            t += dt;
+            float px = x0 + (x - x0) * s / steps, py = y0 + (y - y0) * s / steps;
+            tkAdd(px, py, t, pose);
+            since += 1;
+            if (every > 0 && since >= every && s < steps - 4) {
+                since = 0;
+                t += stopMs;
+                tkAdd(px, py, t, stopPose);
+            }
+        }
+    }
+
+    private void tkHold(int ms, int pose) { tkAdd(tkX[nTk - 1], tkY[nTk - 1], tkT[nTk - 1] + ms, pose); }
+
+    /** Lays out visit k: over the grass to the trunk, up to the limb (and the fruit), back, away. */
+    private void buildSquirrelRun(int k) {
+        nTk = 0;
+        Random r = new Random(day * 31L + k);
+        boolean left = sqLeft[k];
+        float off = 14 * unit;
+        float gy = groundY[Math.max(0, Math.min(cols - 1, baseX))];
+        float trunk = sTh.length > 0 ? sTh[0] / 2 : 2;
+        float run = 24 * sc + 4, climb = 14 * sc + 3;
+        tkAdd(left ? -off : cols + off, gy, 0, SQ_RUN);
+        tkLeg(baseX + (left ? -1 : 1) * (trunk + 5 * unit), gy, run, 50 * sc + 10, 700 + r.nextInt(600), SQ_RUN, SQ_SIT);
+        tkHold(500, SQ_SIT);
+        // Up: the limbs from the root to the chosen one.
+        int[] chain = new int[64];
+        int n = 0;
+        for (int s = sqSeg[k]; s >= 0 && n < chain.length; s = sPar[s]) chain[n++] = s;
+        tkLeg(sX0[chain[n - 1]], sY0[chain[n - 1]] - unit, climb, 0, 0, SQ_CLIMB, SQ_CLIMB);
+        for (int j = n - 1; j >= 0; j--) tkLeg(sX1[chain[j]], sY1[chain[j]], climb, 60 * sc + 10, 400 + r.nextInt(500), SQ_CLIMB, SQ_CLIMB);
+        int fruit = sqFruit[k];
+        if (fruit >= 0) tkLeg(frX[fruit], frY[fruit] + 2 * unit, climb * 0.7f, 0, 0, SQ_CLIMB, SQ_CLIMB);
+        tkEat = fruit >= 0 ? tkT[nTk - 1] : -1;
+        tkHold(fruit >= 0 ? 9000 + r.nextInt(4000) : 3000 + r.nextInt(3000), fruit >= 0 ? SQ_EAT : SQ_SIT);
+        tkEatEnd = tkT[nTk - 1];
+        // Down the same way, head first, then off (usually the way it came).
+        for (int j = 0; j < n; j++) tkLeg(sX0[chain[j]], sY0[chain[j]], climb * 1.1f, 70 * sc + 10, 300 + r.nextInt(400), SQ_CLIMB, SQ_CLIMB);
+        tkLeg(baseX + (left ? -1 : 1) * (trunk + 5 * unit), gy, climb, 0, 0, SQ_CLIMB, SQ_CLIMB);
+        tkHold(600 + r.nextInt(900), SQ_SIT);
+        boolean back = r.nextInt(3) > 0 ? left : !left;
+        tkLeg(back ? -off : cols + off, gy, run, 50 * sc + 10, 600 + r.nextInt(500), SQ_RUN, SQ_SIT);
+        curSq = k;
+    }
+
+    // Where the visitors are this frame.
+    private boolean sqOn, bulOn;
+    private int sqX, sqY, sqPose, sqFrame;
+    private boolean sqFaceLeft, sqDown, sqCarry;
+    private int bulX, bulY, bulMode, bulStartIdx = -1;    // 0 flying, 1 perched, 2 singing
+    private boolean bulFaceLeft;
+
+    /**
+     * The visitors for now (all from the clock). True when the squirrel has just picked its
+     * fruit (or a restart finds it gone), so the still layer drops it from the tree.
+     */
+    private boolean stepVisitors(Calendar c, long t, long msDay, boolean animate, boolean gap) {
+        boolean critters = prefs.gardenCritters && animate && aStep == 0 && demoStart < 0 && dropStart < 0;
+        boolean picked = false;
+        // The squirrel.
+        sqOn = false;
+        int was = takenFruit, wasFor = visitFruit;
+        takenFruit = -1;
+        visitFruit = -1;
+        if (critters && storm == 0) {
+            int sec = (int) (msDay / 1000);
+            for (int k = 0; k < nSq; k++) {
+                if (sec < sqStart[k] || sec > sqStart[k] + 240) continue;
+                if (curSq != k) buildSquirrelRun(k);
+                int e = (int) (msDay - sqStart[k] * 1000L);
+                if (e >= tkT[nTk - 1]) break;
+                int j = 0;
+                int lo = 0, hi = nTk - 1;
+                while (lo < hi) { int mid = (lo + hi + 1) >>> 1; if (tkT[mid] <= e) lo = mid; else hi = mid - 1; }
+                j = lo;
+                int j2 = Math.min(nTk - 1, j + 1);
+                float f = tkT[j2] > tkT[j] ? (e - tkT[j]) / (float) (tkT[j2] - tkT[j]) : 0f;
+                float x = tkX[j] + (tkX[j2] - tkX[j]) * f, y = tkY[j] + (tkY[j2] - tkY[j]) * f;
+                sqPose = tkPose[j2];
+                boolean still = tkX[j2] == tkX[j] && tkY[j2] == tkY[j];
+                if (still && sqPose == SQ_RUN) sqPose = SQ_SIT;
+                // Which way: from a few points ahead.
+                int ja = Math.min(nTk - 1, j + 4), jb = Math.max(0, j - 4);
+                float hx = tkX[ja] - tkX[jb], hy = tkY[ja] - tkY[jb];
+                if (Math.abs(hx) > 0.5f) sqFaceLeft = hx < 0;
+                sqDown = hy > 0;
+                if (sqPose == SQ_CLIMB && Math.abs(hx) > Math.abs(hy) * 1.3f) sqPose = SQ_RUN;   // along a limb
+                sqX = Math.round(x);
+                sqY = Math.round(y);
+                sqFrame = j & 1;
+                sqCarry = sqFruit[k] >= 0 && tkEat >= 0 && e >= tkEat && e < tkEatEnd;
+                if (sqPose == SQ_EAT) sqFaceLeft = frX[sqFruit[k]] < sqX;
+                visitFruit = sqFruit[k];
+                if (sqFruit[k] >= 0 && tkEat >= 0 && e >= tkEat) takenFruit = sqFruit[k];
+                sqOn = true;
+                break;
+            }
+        }
+        if (takenFruit != was || visitFruit != wasFor) picked = true;
+        // The bulbul: flies in to a limb end, hops and sings a while, flies off.
+        bulOn = false;
+        if (critters && storm == 0) {
+            int sec = (int) (msDay / 1000);
+            for (int k = 0; k < nBul; k++) {
+                long e = msDay - bulStart[k] * 1000L;
+                long total = 2 * BUL_FLY_MS + bulStay[k];
+                if (e < 0 || e >= total) continue;
+                if (sec < bulStart[k]) continue;
+                int s = bulSeg[k];
+                float px = sX1[s], py = sY1[s];
+                // A second spot a little way back along the limb, to hop to.
+                float qx = sX1[s] + (sX0[s] - sX1[s]) * 0.35f, qy = sY1[s] + (sY0[s] - sY1[s]) * 0.35f;
+                float sx = bulLeft[k] ? -10 * unit : cols + 10 * unit, sy = rows * 0.1f;
+                if (e < BUL_FLY_MS || e >= total - BUL_FLY_MS) {
+                    boolean in = e < BUL_FLY_MS;
+                    float p = in ? e / (float) BUL_FLY_MS : (e - (total - BUL_FLY_MS)) / (float) BUL_FLY_MS;
+                    float ax = in ? sx : px, ay = in ? sy : py, bx = in ? px : (bulLeft[k] ? cols + 10 * unit : -10 * unit), by = in ? py : sy;
+                    float q = in ? 1 - (1 - p) * (1 - p) : p * p;
+                    bulX = Math.round(ax + (bx - ax) * q);
+                    bulY = Math.round(ay + (by - ay) * q - (float) Math.sin(Math.PI * p) * rows * 0.04f);
+                    bulFaceLeft = bx < ax;
+                    bulMode = 0;
+                } else {
+                    long pe = e - BUL_FLY_MS;
+                    int hopEvery = 9000;
+                    long phase = pe % hopEvery;
+                    boolean atQ = (pe / hopEvery) % 2 == 1;
+                    float fx = atQ ? qx : px, fy = atQ ? qy : py, ox = atQ ? px : qx, oy = atQ ? py : qy;
+                    if (pe >= hopEvery && phase < 350) {       // a hop
+                        float p = phase / 350f;
+                        bulX = Math.round(ox + (fx - ox) * p);
+                        bulY = Math.round(oy + (fy - oy) * p - (float) Math.sin(Math.PI * p) * 3 * unit);
+                        bulFaceLeft = fx < ox;
+                        bulMode = 1;
+                    } else {
+                        bulX = Math.round(fx);
+                        bulY = Math.round(fy);
+                        bulFaceLeft = (pe / 4000) % 3 == 1 ? !bulLeft[k] : bulLeft[k];
+                        bulMode = phase > 3000 && phase < 5400 && ((phase / 300) & 1) == 0 ? 2 : 1;   // a song
+                    }
+                }
+                bulOn = true;
+                break;
+            }
+        }
+        lifeFast = (sqOn && (sqPose == SQ_RUN || sqPose == SQ_CLIMB)) || (bulOn && bulMode == 0);
+        stepSmallLife(c, t, critters, gap);
+        lifeMoving = sqOn || bulOn || bfOn || dfOn || catState != 0;
+        return picked;
+    }
+
+    private static final int BUL_FLY_MS = 2600;
+
+    // ---- butterflies, dragonflies, the cat ----
+
+    private boolean bfOn, dfOn;
+    private final float[] bfX = new float[2], bfY = new float[2], bfTX = new float[2], bfTY = new float[2];
+    private final long[] bfUntil = new long[2];
+    private final boolean[] bfRest = new boolean[2];
+    private final float[] dfX = new float[2], dfY = new float[2], dfTX = new float[2], dfTY = new float[2];
+    private final long[] dfUntil = new long[2];
+    private final boolean[] dfRest = new boolean[2];
+    private long smallLast = -1;
+
+    private boolean catDay;
+    private int catType, catFrom, catTo, catState;     // 0 away, 1 walking, 2 lying
+    private float catX, catGoal;
+    private boolean catLeaving, catFaceLeft;
+
+    private void stepSmallLife(Calendar c, long t, boolean critters, boolean gap) {
+        float dt = smallLast < 0 || gap ? 0f : Math.min(1000, t - smallLast) / 1000f;
+        smallLast = t;
+        int m = minuteOfDay(c);
+        int[] tt = SunMoon.times(prefs, c);
+        boolean day = m >= tt[0] + 30 && m < tt[1] - 20;
+        // Butterflies: in the daytime, out of the rain, from flower to flower.
+        boolean bf = critters && day && storm == 0 && g > 2000;
+        if (bf && !bfOn) {
+            for (int k = 0; k < 2; k++) {
+                float[] p = flowerSpot();
+                bfX[k] = p[0] + (rnd.nextFloat() - 0.5f) * 40 * sc;
+                bfY[k] = p[1] - 20 * sc;
+                bfRest[k] = false;
+                bfTX[k] = p[0];
+                bfTY[k] = p[1];
+            }
+        }
+        bfOn = bf;
+        if (bfOn) for (int k = 0; k < 2; k++) {
+            if (bfRest[k]) {
+                if (t < bfUntil[k]) continue;
+                float[] p = flowerSpot();
+                bfTX[k] = p[0];
+                bfTY[k] = p[1];
+                bfRest[k] = false;
+            }
+            if (fly(bfX, bfY, bfTX, bfTY, k, 7 * sc + 1, dt)) {
+                bfRest[k] = true;
+                bfUntil[k] = t + 4000 + rnd.nextInt(9000);
+            }
+        }
+        // Dragonflies: the half hour after a storm, over the puddle; hover, dart, hover.
+        int im = stormFrom >= 0 ? m - stormFrom - stormLen : -1;
+        boolean df = critters && day && storm == 0 && im >= 2 && im < 40;
+        if (df && !dfOn) for (int k = 0; k < 2; k++) {
+            float[] p = hoverSpot();
+            dfX[k] = p[0]; dfY[k] = p[1]; dfTX[k] = p[0]; dfTY[k] = p[1];
+            dfRest[k] = true;
+            dfUntil[k] = t + rnd.nextInt(3000);
+        }
+        dfOn = df;
+        if (dfOn) for (int k = 0; k < 2; k++) {
+            if (dfRest[k]) {
+                if (t < dfUntil[k]) continue;
+                float[] p = hoverSpot();
+                dfTX[k] = p[0];
+                dfTY[k] = p[1];
+                dfRest[k] = false;
+            }
+            if (fly(dfX, dfY, dfTX, dfTY, k, 45 * sc + 4, dt)) {
+                dfRest[k] = true;
+                dfUntil[k] = t + 1500 + rnd.nextInt(3500);
+            }
+        }
+        // The cat: some days it naps in the tree's shade from late morning, moving when the shade
+        // does; it leaves in the afternoon, or when the rain comes or the shade goes.
+        boolean want = critters && catDay && m >= catFrom && m < catTo && shadeMid >= 0 && storm == 0;
+        float spot = catSpot();
+        int cw = CAT_LIE.w * unit;
+        if (catState == 0) {
+            if (want && spot >= 0) {
+                if (gap || dt == 0f) { catX = spot; catState = 2; }
+                else { catX = spot < cols / 2 ? -cw : cols + cw; catGoal = spot; catState = 1; }
+                catLeaving = false;
+            }
+        } else if (!want || spot < 0) {
+            if (!catLeaving) {
+                catLeaving = true;
+                catGoal = catX < cols / 2 ? -cw - 2 : cols + cw + 2;
+                catState = 1;
+            }
+        } else if (catState == 2 && Math.abs(spot - catX) > 12 * unit) {
+            catGoal = spot;
+            catState = 1;
+        }
+        if (catState == 1) {
+            float step = (5 * sc + 1) * dt;
+            catFaceLeft = catGoal < catX;
+            if (Math.abs(catGoal - catX) <= step) {
+                catX = catGoal;
+                if (catLeaving) { catState = 0; catLeaving = false; }
+                else catState = 2;
+            } else catX += Math.signum(catGoal - catX) * step;
+        }
+        if (!critters) { catState = 0; catLeaving = false; }
+    }
+
+    /** Moves flier k toward its target; true when it gets there. */
+    private boolean fly(float[] x, float[] y, float[] tx, float[] ty, int k, float speed, float dt) {
+        float dx = tx[k] - x[k], dy = ty[k] - y[k];
+        float d = (float) Math.hypot(dx, dy), step = speed * dt;
+        if (d <= Math.max(0.6f, step)) { x[k] = tx[k]; y[k] = ty[k]; return true; }
+        x[k] += dx / d * step;
+        y[k] += dy / d * step;
+        return false;
+    }
+
+    /** A flower to land on: one open on the digits, or a shrub in flower; else over the grass. */
+    private float[] flowerSpot() {
+        List<float[]> list = new ArrayList<>();
+        for (int s = 0; s < spots.size(); s++) for (int[] sp : spots.get(s)) {
+            if (sp[4] >= 2) list.add(new float[]{sp[0], sp[1] - FLOWER[sp[4]].length * unit});
+        }
+        for (int k = 0; k < shrubX.length; k++) {
+            if (shrubStage[k] >= SHRUB.length) list.add(new float[]{shrubX[k], groundY[shrubX[k]] - SHRUB[SHRUB.length - 1].h * unit + unit});
+        }
+        if (list.isEmpty()) {
+            int x = 10 + rnd.nextInt(Math.max(1, cols - 20));
+            return new float[]{x, groundY[x] - (8 + rnd.nextInt(30)) * sc};
+        }
+        return list.get(rnd.nextInt(list.size()));
+    }
+
+    private float[] hoverSpot() {
+        float x = baseX + (rnd.nextFloat() - 0.5f) * 90 * unit;
+        x = Math.max(4, Math.min(cols - 10, x));
+        return new float[]{x, groundTop - (8 + rnd.nextInt(34)) * sc};
+    }
+
+    /** Where the cat lies: in the full shade, beside the trunk rather than on it. */
+    private float catSpot() {
+        if (shadeMid < 0) return -1;
+        float cw = CAT_LIE.w * unit;
+        float x = shadeMid - cw / 2;
+        float trunk = (sTh.length > 0 ? sTh[0] / 2 : 2) + 2 * unit;
+        if (x + cw > baseX - trunk && x < baseX + trunk) {
+            x = shadeMid >= baseX ? baseX + trunk : baseX - trunk - cw;
+        }
+        return Math.max(2, Math.min(cols - cw - 2, x));
+    }
+
+    // ---- the snail: across the grass once an hour (there and back), a minutes hand ----
+
+    private int snX = Integer.MIN_VALUE;
+    private boolean snLeft;
+
+    private int snailLeft(long msDay) {
+        int w = SNAIL.w * unit, span = cols + w;
+        float a = (msDay % 3_600_000L) / 3_600_000f;
+        boolean back = (msDay / 3_600_000L) % 2 == 1;
+        snLeft = back;
+        int x = Math.round((back ? 1 - a : a) * span) - w;
+        return x;
+    }
+
+    private int snailY() {
+        int x = Math.max(0, Math.min(cols - 1, snX + SNAIL.w * unit / 2));
+        return groundY[x] - SNAIL.h * unit + unit;
+    }
+
+    /** The snail's palette entry at (x, y), or -1. */
+    private int snailAt(int x, int y) {
+        if (snX == Integer.MIN_VALUE || !prefs.gardenCritters) return -1;
+        int dx = x - snX, y0 = snailY(), dy = y - y0;
+        if (dx < 0 || dy < 0 || dx >= SNAIL.w * unit || dy >= SNAIL.h * unit) return -1;
+        return SNAIL.at(dx / unit, dy / unit, snLeft);
+    }
+
+    /** Its silvery trail along the top of the grass behind it. */
+    private boolean trailAt(int x) {
+        if (snX == Integer.MIN_VALUE || !prefs.gardenCritters) return false;
+        int len = 36 * unit, w = SNAIL.w * unit;
+        boolean on = snLeft ? x >= snX + w && x < snX + w + len : x < snX && x >= snX - len;
+        return on && (hash(x * 31 + day) & 3) != 0;
+    }
+
+    private void moveSnail(long msDay, boolean recompose) {
+        if (!prefs.gardenCritters) return;
+        int nx = snailLeft(msDay), old = snX;
+        if (nx == old) return;
+        snX = nx;
+        if (recompose || old == Integer.MIN_VALUE || Math.abs(nx - old) > 4 * unit) {
+            if (!recompose && old != Integer.MIN_VALUE) { composeAll(); }
+            return;
+        }
+        int len = 36 * unit + 2, w = SNAIL.w * unit;
+        int x0 = Math.min(old, nx) - len, x1 = Math.max(old, nx) + w + len;
+        int y0 = groundTop - SNAIL.h * unit - 3, y1 = groundTop + 3;
+        composeRect(x0, y0, x1 - x0, y1 - y0);
+        addCur(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    // ---- the owl: on a sturdy limb from dusk ----
+
+    private int owlSeg = -1;
+
+    private void planOwl() {
+        int nest = nestFork();
+        float best = -1e9f;
+        for (int k = 0; k < nSeg; k++) {
+            if (sDepth[k] < 1 || sDepth[k] > 3 || k == nest) continue;
+            if (k + 1 < nSeg && sPar[k + 1] == k && sDepth[k + 1] == sDepth[k]) continue;
+            float x = sX1[k], y = sY1[k];
+            if (y > groundTop - 30 * unit) continue;
+            boolean onText = onClock(x - 4 * unit, y - 8 * unit, x + 4 * unit, y + unit);
+            boolean awayFromNest = nest < 0 || (x - baseX) * (sX1[nest] - baseX) < 0;
+            float score = sTh[k] - (onText ? 100 : 0) + (awayFromNest ? 20 : 0);
+            if (score > best) { best = score; owlSeg = k; }
+        }
+    }
+
+    private boolean owlShown(Calendar c) {
+        if (owlSeg < 0 || !prefs.gardenCritters || aStep > 0 || demoStart >= 0 || dropStart >= 0) return false;
+        if (sT1[owlSeg] > g) return false;
+        int m = minuteOfDay(c);
+        int[] tt = SunMoon.times(prefs, c);
+        return m >= tt[1] + 25 || m < tt[0] - 30;
+    }
+
+    private int owlX() { return Math.round(sX1[owlSeg]) - OWL_S.w * unit / 2; }
+    private int owlY() { return Math.round(sY1[owlSeg]) - OWL_S.h * unit + unit; }
+
+    // ---- into the still layer (with the extras) ----
+
+    /** Changes whenever the fruit, the owl or the squirrel's pick change. */
+    private long lifeKey(Calendar c) {
+        int m = minuteOfDay(c);
+        lifeSec = (int) (msOfDay(c) / 1000);
+        long key = 7;
+        for (int k = 0; k < nFruit; k++) key = key * 31 + fruitState(k, m);
+        key = key * 31 + takenFruit;
+        key = key * 31 + (owlShown(c) ? 1 : 0);
+        return key;
+    }
+
+    /** -1 nothing, 0 bud, 1 blossom, 2 fruitlet, 3..6 fruit by ripeness, 7 on the ground. */
+    private int fruitState(int k, int m) {
+        if (aStep * 2 > A_STEPS) return -1;                   // autumn takes it with the leaves
+        if (m >= frDrop[k]) return 7;
+        // Eaten: gone once its squirrel has come, except while it climbs up to it.
+        if (lifeSec >= frEaten[k] && !(k == visitFruit && takenFruit != k)) return -1;
+        if (m < frBloom[k] - 40) return -1;
+        if (m < frBloom[k]) return 0;
+        if (m < frSet[k]) return 1;
+        if (m < frSet[k] + 60) return 2;
+        return 3 + ripeness(k, m);
+    }
+
+    private void stampLife(Calendar c) {
+        int m = minuteOfDay(c);
+        for (int k = 0; k < nFruit; k++) {
+            int st = fruitState(k, m);
+            if (st < 0) continue;
+            if (st < 7 && leafT[frY[k] * cols - cols + frX[k]] > g) continue;   // its leaves not grown yet
+            Sprite sp = st == 0 ? F_BUD : st == 1 ? F_BLOSSOM : st == 2 ? F_SMALL
+                    : st == 7 ? F_FALLEN : fruitType == 0 ? F_RAMBUTAN : F_MANGO;
+            int x = frX[k] - sp.w * unit / 2, y = frY[k];
+            if (st == 7) {
+                x = Math.max(0, Math.min(cols - sp.w * unit, x + frRoll[k]));
+                y = groundY[Math.max(0, Math.min(cols - 1, x + unit))] - sp.h * unit + unit;
+            }
+            int ripe = st == 7 ? 3 : Math.max(0, st - 3);
+            stamp(sp, x, y, FRUIT0, FRUIT0 + ripe);
+        }
+        if (owlShown(c)) stamp(OWL_S, owlX(), owlY());
+    }
+
+    // ---- drawing the visitors ----
+
+    private boolean owlBlink;
+    private final int[] bfDX = new int[2], bfDY = new int[2], dfDX = new int[2], dfDY = new int[2];
+    private int catDX, catDY;
+
+    private void placeLife(long t, boolean animate) {
+        if (sqOn) addCur(sqX - 9 * unit, sqY - 12 * unit, 18 * unit, 18 * unit);
+        if (bulOn) addCur(bulX - 6 * unit, bulY - 8 * unit, 12 * unit, 10 * unit);
+        if (bfOn) for (int k = 0; k < 2; k++) {
+            float bob = bfRest[k] ? 0 : (float) Math.sin(t / 260.0 + k * 2) * 2 * unit;
+            bfDX[k] = Math.round(bfX[k]) - BF_OPEN.w * unit / 2;
+            bfDY[k] = Math.round(bfY[k] + bob) - BF_OPEN.h * unit + unit;
+            addCur(bfDX[k], bfDY[k], BF_OPEN.w * unit, BF_OPEN.h * unit);
+        }
+        if (dfOn) for (int k = 0; k < 2; k++) {
+            float wob = dfRest[k] ? (float) Math.sin(t / 300.0 + k * 3) * unit : 0;
+            dfDX[k] = Math.round(dfX[k]) - DF_A.w * unit / 2;
+            dfDY[k] = Math.round(dfY[k] + wob);
+            addCur(dfDX[k], dfDY[k], DF_A.w * unit, DF_A.h * unit);
+        }
+        if (catState != 0) {
+            Sprite s = catState == 2 ? CAT_LIE : CAT_WALK_A;
+            catDX = Math.round(catX);
+            int foot = groundY[Math.max(0, Math.min(cols - 1, catDX + s.w * unit / 2))];
+            catDY = foot - s.h * unit + unit;
+            addCur(catDX, catDY - unit, s.w * unit, (s.h + 1) * unit);
+        }
+        // The owl blinks now and then (its eyes only; the rest of it is in the still layer).
+        owlBlink = false;
+        int eye = (owlY() + 2 * unit) * cols + owlX() + unit;
+        if (animate && owlSeg >= 0 && eye >= 0 && eye < extra.length && extra[eye] == OWL_EYE) {
+            owlBlink = t % 6100 < 280 || (t % 23_000) < 200;
+            if (owlBlink) addCur(owlX(), owlY() + 2 * unit, OWL_S.w * unit, unit);
+        }
+    }
+
+    private void drawLife(long t) {
+        if (catState == 2) drawSpr((t / 1700) % 2 == 0 ? CAT_LIE : CAT_LIE_B, catDX, catDY, catFaceLeft, false, false, -1, -1);
+        else if (catState == 1) drawSpr(((int) (catX / unit)) % 2 == 0 ? CAT_WALK_A : CAT_WALK_B, catDX, catDY, catFaceLeft, false, false, -1, -1);
+        if (dfOn) for (int k = 0; k < 2; k++) drawSpr((t / 120) % 2 == 0 ? DF_A : DF_B, dfDX[k], dfDY[k], dfTX[k] < dfX[k], false, true, -1, -1);
+        if (bfOn) for (int k = 0; k < 2; k++) {
+            boolean open = bfRest[k] ? (t / 1100 + k) % 2 == 0 : (t / 180 + k) % 2 == 0;
+            drawSpr(open ? BF_OPEN : BF_SHUT, bfDX[k], bfDY[k], false, false, true, BF0, BF0 + k);
+        }
+        if (sqOn) {
+            Sprite s;
+            boolean fy = false;
+            if (sqPose == SQ_CLIMB) { s = SQ_UP; fy = sqDown; }
+            else if (sqPose == SQ_EAT) s = SQ_NIBBLE;
+            else if (sqPose == SQ_SIT) s = SQ_SITS;
+            else s = sqFrame == 0 ? SQ_RUN_A : SQ_RUN_B;
+            int w = s.w * unit, h = s.h * unit;
+            int x = sqX - w / 2, y = sqPose == SQ_CLIMB ? sqY - h / 2 : sqY - h + unit;
+            drawSpr(s, x, y, sqFaceLeft, fy, true, -1, -1);
+        }
+        if (bulOn) {
+            Sprite s = bulMode == 0 ? (((t / 120) % 2 == 0) ? BUL_UP : BUL_DOWN) : bulMode == 2 ? BUL_SING : BUL_PERCH;
+            int w = s.w * unit, h = s.h * unit;
+            drawSpr(s, bulX - w / 2, bulMode == 0 ? bulY - h / 2 : bulY - h + unit, bulFaceLeft, false, false, -1, -1);
+        }
+        if (owlBlink) {
+            int y = owlY() + 2 * unit;
+            for (int yy = y; yy < y + unit; yy++) for (int xx = owlX(); xx < owlX() + OWL_S.w * unit; xx++) {
+                if (xx >= 0 && xx < cols && yy >= 0 && yy < rows && extra[yy * cols + xx] == OWL_EYE) px[yy * cols + xx] = pal[OWL];
+            }
+        }
+    }
+
+    /** Draws a sprite (unit-scaled), mirrored either way, with palette entry `from` swapped for `to`. */
+    private void drawSpr(Sprite s, int x, int y, boolean fx, boolean fy, boolean behindText, int from, int to) {
+        for (int sy = 0; sy < s.h * unit; sy++) {
+            int yy = y + sy;
+            if (yy < 0 || yy >= rows) continue;
+            int ry = fy ? s.h - 1 - sy / unit : sy / unit;
+            for (int sx = 0; sx < s.w * unit; sx++) {
+                int xx = x + sx;
+                if (xx < 0 || xx >= cols) continue;
+                int pi = s.at(sx / unit, ry, fx);
+                if (pi < 0) continue;
+                int i = yy * cols + xx;
+                if (behindText && (text[i] != 0 || planter[i] != 0)) continue;
+                px[i] = pal[pi == from ? to : pi];
             }
         }
     }
@@ -1460,7 +2410,7 @@ final class GardenScene {
             tipY = Math.round(sY0[k] + (sY1[k] - sY0[k]) * f);
         }
         long key = ((period * 1000 + (nestShown ? nest : 0) * 100 + mush * 10 + (seed ? 1 : 0)) * 4096 + tipX + 1) * 4096 + tipY + 1;
-        key = key * 1_000_003L + decorState(c);
+        key = (key * 1_000_003L + decorState(c)) * 1_000_003L + lifeKey(c);
         if (key == extrasKey) return false;
         extrasKey = key;
         java.util.Arrays.fill(extra, (byte) 0);
@@ -1483,6 +2433,7 @@ final class GardenScene {
             stamp(k % 3 == 2 ? MUSH_SMALL : MUSH, x, groundY[x + MUSH.w * unit / 2] - (k % 3 == 2 ? MUSH_SMALL : MUSH).h * unit + unit);
         }
         stampFestival();
+        stampLife(c);
         return true;
     }
 
@@ -1828,4 +2779,169 @@ final class GardenScene {
             "rrrrr",
             ".ggg.",
             "..g..");
+
+    // ---- the garden's visitors and fruit ----
+
+    /** The plantain squirrel: brown, a pale side stripe, a rufous belly; facing right. */
+    private static final String SQK = "TBLSeF";
+    private static final int[] SQI = {SQ_TAIL, SQ_BODY, SQ_BELLY, SQ_STRIPE, SQ_EYE, SQ_FRUIT};
+    static final Sprite SQ_RUN_A = new Sprite(SQK, SQI,
+            "TTT.......",
+            "T.TT...BB.",
+            "...TBBBBeB",
+            "...BBSSSBB",
+            "....LLLLB.",
+            "....B..B..");
+    static final Sprite SQ_RUN_B = new Sprite(SQK, SQI,
+            ".TTT......",
+            "TT.T...BB.",
+            "...TBBBBeB",
+            "...BBSSSBB",
+            "....LLLLB.",
+            "...B....B.");
+    static final Sprite SQ_SITS = new Sprite(SQK, SQI,
+            "TT...BB.",
+            "TTT.BBeB",
+            ".TT.BBBB",
+            "..TBBLL.",
+            "..TBSLL.",
+            "...TBLL.",
+            "...BB.B.");
+    static final Sprite SQ_NIBBLE = new Sprite(SQK, SQI,
+            "TT...BB.",
+            "TTT.BBeB",
+            ".TT.BBBF",
+            "..TBBLFF",
+            "..TBSLL.",
+            "...TBLL.",
+            "...BB.B.");
+    /** Climbing, head up (drawn upside down going down: squirrels come down head first). */
+    static final Sprite SQ_UP = new Sprite(SQK, SQI,
+            "..BB..",
+            ".BeeB.",
+            "B.BB.B",
+            ".BSSB.",
+            ".BLLB.",
+            "B.BB.B",
+            "..BB..",
+            "..TT..",
+            ".TTTT.",
+            ".TTTT.",
+            "..TT..");
+    /** The yellow-vented bulbul: dark crest, brown back, pale front, yellow under the tail. */
+    private static final String BUK = "KBWYbf";
+    private static final int[] BUI = {BUL_HEAD, BUL_BACK, BUL_BELLY, BUL_VENT, BUL_HEAD, NEST1};
+    static final Sprite BUL_PERCH = new Sprite(BUK, BUI,
+            "...KK.",
+            "..KKKb",
+            ".BBWW.",
+            "BBBWW.",
+            "B.BYY.",
+            "...f..");
+    static final Sprite BUL_SING = new Sprite(BUK, BUI,
+            "...KKb",
+            "..KKK.",
+            ".BBWWb",
+            "BBBWW.",
+            "B.BYY.",
+            "...f..");
+    static final Sprite BUL_UP = new Sprite("BLkW", new int[]{BUL_BACK, BUL_BELLY, BUL_HEAD, BUL_BACK},
+            "...WW...",
+            "....WW..",
+            "BB.BBBBk",
+            "..BLLLB.",
+            "........");
+    static final Sprite BUL_DOWN = new Sprite("BLkW", new int[]{BUL_BACK, BUL_BELLY, BUL_HEAD, BUL_BACK},
+            "........",
+            "........",
+            "BB.BBBBk",
+            "..BLWWB.",
+            "....WW..");
+    /** Butterflies (O = wing colour, swapped per butterfly). */
+    static final Sprite BF_OPEN = new Sprite("OK", new int[]{BF0, BF_K},
+            "OO.OO",
+            "OOKOO",
+            ".OKO.",
+            "K.K.K");
+    static final Sprite BF_SHUT = new Sprite("OK", new int[]{BF0, BF_K},
+            "..O..",
+            ".OO..",
+            ".OK..",
+            "..K..");
+    /** A dragonfly, wings up and down. */
+    static final Sprite DF_A = new Sprite("BWH", new int[]{DF_BODY, DF_WING, DF_HEAD},
+            "..WWW..",
+            "BBBBBBH",
+            ".......");
+    static final Sprite DF_B = new Sprite("BWH", new int[]{DF_BODY, DF_WING, DF_HEAD},
+            ".......",
+            "BBBBBBH",
+            "..WWW..");
+    /** A snail, facing right. */
+    static final Sprite SNAIL = new Sprite("Ssbk", new int[]{SN_SHELL, SN_SHELL_D, SN_BODY, SN_SHELL_D},
+            "..SSS...",
+            ".SsssS.k",
+            ".SsSSSbk",
+            "bbbbbbb.");
+    /** A cat asleep, curled up (two breaths), and walking; facing right. */
+    private static final String CK = "OSe";
+    private static final int[] CI = {CAT0, CAT1, CAT_EYE};
+    static final Sprite CAT_LIE = new Sprite(CK, CI,
+            "........O.O",
+            "..OOOOO.OOO",
+            ".OOSOOSOOeO",
+            "SOOOOOOOOOO",
+            "SSOOOOOOOO.");
+    static final Sprite CAT_LIE_B = new Sprite(CK, CI,
+            "........O.O",
+            "...OOOO.OOO",
+            ".OOSOOSOOeO",
+            "SOOOOOOOOOO",
+            "SSOOOOOOOO.");
+    static final Sprite CAT_WALK_A = new Sprite(CK, CI,
+            "S.........OO",
+            "S........OOO",
+            ".S.......OeO",
+            "..OOSOOSOOO.",
+            "..OOOOOOOO..",
+            "..O.O..O.O..");
+    static final Sprite CAT_WALK_B = new Sprite(CK, CI,
+            ".S........OO",
+            "S........OOO",
+            ".S.......OeO",
+            "..OOSOOSOOO.",
+            "..OOOOOOOO..",
+            "...O.O.O.O..");
+    /** A small owl, facing out. */
+    static final Sprite OWL_S = new Sprite("OLYkf", new int[]{OWL, OWL_L, OWL_EYE, BEAK, NEST1},
+            "O....O",
+            "OOOOOO",
+            "OYOOYO",
+            "OOkkOO",
+            ".OLLO.",
+            ".OLLO.",
+            "..ff..");
+    /** Fruit (F is the ripeness colour) and its blossom. */
+    private static final String FK = "Fspcb";
+    private static final int[] FI = {FRUIT0, BARK1, BLOS, CENTER, BUD};
+    static final Sprite F_BUD = new Sprite(FK, FI, "b");
+    static final Sprite F_BLOSSOM = new Sprite(FK, FI,
+            ".p.",
+            "pcp",
+            ".p.");
+    static final Sprite F_SMALL = new Sprite(FK, FI,
+            ".s.",
+            ".F.");
+    static final Sprite F_RAMBUTAN = new Sprite(FK, FI,
+            ".s.",
+            "FFF",
+            "FFF");
+    static final Sprite F_MANGO = new Sprite(FK, FI,
+            ".s.",
+            ".FF",
+            "FFF",
+            "FF.");
+    static final Sprite F_FALLEN = new Sprite(FK, FI,
+            ".FF",
+            "FFF");
 }

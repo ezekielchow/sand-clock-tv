@@ -5,19 +5,25 @@ time of day as something that fills up or grows, and resets at midnight:
 
 - **Ant farm**: through the day the ants dig a new tunnel network (one grain every 6 s) and pile
   the soil into an anthill on the surface, in hour-coloured layers. The clock is dug out
-  underground; an ant walking the surface is the seconds hand. Rain washes it away before
-  midnight.
+  underground; an ant walking the surface is the seconds hand. A few times a day food lands on
+  the grass and a trail of foragers carries it down to the pantry until it is gone; the queen
+  lives in the deepest chamber with her eggs and nurses, and moves down as the nest grows.
+  Rain washes it away before midnight.
 - **Ocean**: the sea rises over the day; a whale on the surface is the seconds hand (it crosses
   the screen each minute and spouts at :00). Letters fill once the water reaches their rim,
   changing digits dissolve into bubbles, digits that stay grow coral, and the animals change
   with depth. A whirlpool drains it before midnight.
 - **Garden**: a tree grows from a seed to a full canopy over the day; flowers bloom on the
-  digits; a ladybug climbing a branch is the seconds hand and a bee visits at :00. Autumn
-  strips the tree before midnight.
+  digits; a ladybug climbing a branch is the seconds hand and a bee visits at :00. Its shadow
+  turns like a sundial; the tree blossoms and its fruit (rambutan or mango) ripens by evening,
+  some falling, some taken by a squirrel. A bulbul drops in, butterflies work the flowers, a
+  snail crosses the grass each hour, some days a cat naps in the shade, mist on some mornings,
+  dragonflies after a storm, an owl at dusk; clouds drift over. Autumn strips the tree before
+  midnight.
 
 Settings → **Scenes** picks which scenes to use; one is shown per day, taking turns. While it
 is the screensaver, the app keeps lifetime stats (shown now and then in the scene) and grows
-extras that reset every two weeks (barnacles and a calf, a treasure chest, a queen's chamber,
+extras that reset every two weeks (barnacles and a calf, a treasure chest, a brood of eggs,
 a bird's nest, fossils, a night constellation...).
 
 ## Build

@@ -64,9 +64,14 @@ final class AntScene {
     /** Tunnel centre lines (for the workers): cell indexes, and the order index they finish at. */
     private final List<int[]> paths = new ArrayList<>();
     private final List<Integer> pathDone = new ArrayList<>();
-    private int queenChamber, eggChamber, foodChamber;   // chamber ids (1..n) for the extras
+    private final List<int[]> pathEnds = new ArrayList<>(); // {node a, node b}: path runs a -> b
+    private int eggChamber, foodChamber;                  // chamber ids (1..n): eggs; the pantry
     private final int[][] chambers = new int[12][];      // {cx, cy, rx, ry}
+    private final int[] chamberDone = new int[12];       // order index a chamber is finished at
     private int nChambers;
+    /** Nest graph nodes: 0 the entrance, 1..nChambers the chambers, then side-tunnel ends. */
+    private int nNodes;
+    private final int[] nodeEdge = new int[16];          // a side end's path (else -1)
     private final byte[] patch;           // soil tone: 0 dark, 1 mid, 2 light
 
     // ---- clock text underground ----
@@ -156,6 +161,7 @@ final class AntScene {
 
         makePatches(new Random(day * 131L + 7));
         planNest(r);
+        planFood(new Random(day * 977L + 5));
     }
 
     void setRecording(boolean on) { recording = on && stats != null; }
@@ -290,28 +296,32 @@ final class AntScene {
             left--;
             int[] e = tree.get(pick);
             int from = done[e[0]] ? e[0] : e[1], to = done[e[0]] ? e[1] : e[0];
-            tunnel(r, nx[from], ny[from], nx[to], ny[to], rad, from == 0);
+            tunnel(r, nx[from], ny[from], nx[to], ny[to], rad, from == 0, from, to);
             dugChamber(to - 1, nx[from], ny[from]);
             done[to] = true;
         }
+        Arrays.fill(nodeEdge, -1);
+        nNodes = nn;
         // Then the loops, shallowest first, and a couple of side tunnels off to the edges.
-        for (int[] e : loops) tunnel(r, nx[e[0]], ny[e[0]], nx[e[1]], ny[e[1]], rad, false);
+        for (int[] e : loops) tunnel(r, nx[e[0]], ny[e[0]], nx[e[1]], ny[e[1]], rad, false, e[0], e[1]);
         for (int k = 0; k < 2 && nChambers > 0; k++) {
             int c = r.nextInt(nChambers);
             float tx = chambers[c][0] < cols / 2 ? cols * 0.04f : cols * 0.96f;
             float ty = chambers[c][1] + (r.nextFloat() - 0.5f) * soilH * 0.4f;
             ty = Math.max(soilTop + rad + 2, Math.min(soilBot - rad - 2, ty));
-            tunnel(r, chambers[c][0], chambers[c][1], tx, ty, rad - 1, false);
+            nodeEdge[nNodes] = paths.size();
+            tunnel(r, chambers[c][0], chambers[c][1], tx, ty, rad - 1, false, c + 1, nNodes++);
         }
-        // Roles for the two-week extras: the deepest chamber is the queen's, then eggs, food.
+        // Roles: the queen lives in the deepest finished chamber (see the colony); the second
+        // deepest keeps the eggs (a two-week extra); the first one dug is the pantry.
         Integer[] byDepth = new Integer[nChambers];
         for (int k = 0; k < nChambers; k++) byDepth[k] = k;
         Arrays.sort(byDepth, new java.util.Comparator<Integer>() {
             public int compare(Integer a, Integer b) { return chambers[b][1] - chambers[a][1]; }
         });
-        queenChamber = nChambers > 0 ? byDepth[0] + 1 : 0;
         eggChamber = nChambers > 1 ? byDepth[1] + 1 : 0;
-        foodChamber = nChambers > 2 ? byDepth[2] + 1 : 0;
+        foodChamber = 0;
+        for (int k = 0; k < nChambers; k++) if (foodChamber == 0 || chamberDone[k] < chamberDone[foodChamber - 1]) foodChamber = k + 1;
 
         Arrays.fill(dug, false); // nothing is dug yet; `shown` reveals the plan
     }
@@ -327,7 +337,8 @@ final class AntScene {
      * A winding tunnel from (x0, y0) to (x1, y1): a smooth curve through a few points pushed off
      * the straight line, dug with a round brush. The one from the entrance first goes down.
      */
-    private void tunnel(Random r, float x0, float y0, float x1, float y1, int rad, boolean fromEntrance) {
+    private void tunnel(Random r, float x0, float y0, float x1, float y1, int rad, boolean fromEntrance, int na, int nb) {
+        pathEnds.add(new int[]{na, nb});
         float len = (float) Math.hypot(x1 - x0, y1 - y0);
         int mids = 1 + (int) (len / (28 * unit));
         float[] qxs = new float[mids + 4], qys = new float[mids + 4];
@@ -412,6 +423,7 @@ final class AntScene {
             digDir = cell[0] >= ex ? 0 : 1;
             dig(cell[0], cell[1], k + 1);
         }
+        chamberDone[k] = nOrder;
     }
 
     // ---- palette ----
@@ -419,7 +431,7 @@ final class AntScene {
     private static final int SKY = 1, SOIL0 = 2, RIM = 5, TUNNEL = 6, SHADOW = 7, WATER0 = 8,
             WATER_TOP = 10, GRASS0 = 11, TEXT = 13, ANT = 14, WORKER = 15, CRUMB = 16, POUR = 17,
             ROCK0 = 18, BONE = 20, QUEEN = 21, EGG = 22, SEED = 23, DEW = 24, NOTE = 25,
-            HILL0 = 26, N_PAL = 26 + 25 * 4;
+            HILL0 = 26, WORKER_SKY = 26 + 25 * 4, N_PAL = WORKER_SKY + 1;
     private final int[] pal = new int[N_PAL];
     private int colorKey = Integer.MIN_VALUE;
     private static final float[] LAYER_B = {1.00f, 0.84f, 1.10f, 0.92f, 0.78f, 1.04f};
@@ -453,11 +465,12 @@ final class AntScene {
         pal[TEXT] = prefs.textColor(1f);
         pal[ANT] = prefs.color(0xA8492A, 1f);
         pal[WORKER] = prefs.color(0x1E120A, 1f);
+        pal[WORKER_SKY] = st == 2 ? prefs.color(0x7A5638, 1f) : pal[WORKER];   // shows on a black sky
         pal[CRUMB] = prefs.color(0xE8D8A8, 1f);
         pal[ROCK0] = prefs.color(0x3A322A, st < 2 ? 0.7f : 1f);
         pal[ROCK0 + 1] = prefs.color(0x2C2620, st < 2 ? 0.7f : 1f);
         pal[BONE] = prefs.color(0xD8CCB0, 0.6f);
-        pal[QUEEN] = prefs.color(0x6A2A14, 1f);
+        pal[QUEEN] = prefs.color(0x9A3C1C, 1f);
         pal[EGG] = prefs.color(0xF2EEDC, 0.85f);
         pal[SEED] = prefs.color(0x8A6A2A, 0.9f);
         pal[DEW] = prefs.color(0xFFF4DC, 1f);
@@ -525,24 +538,32 @@ final class AntScene {
         return pal[SOIL0 + patch[i]];
     }
 
-    /** What the two-week extras put in a chamber: the queen, eggs, stored seeds (0 = nothing). */
+    /**
+     * What lies in a chamber (0 = nothing): eggs (a two-week extra), and in the pantry the food
+     * the foragers brought in today, piled up from the floor on one side (plus the two-week
+     * extra's seeds).
+     */
     private int contents(int c, int x, int y) {
-        if (c == queenChamber && queenShown) {
-            int[] ch = chambers[c - 1];
-            int qw = QUEEN_ART[0].length() * unit, qh = QUEEN_ART.length * unit;
-            int qx = x - (ch[0] - qw / 2), qy = y - (ch[1] + ch[3] / 2 - qh + unit);
-            if (qx >= 0 && qy >= 0 && qx < qw && qy < qh && QUEEN_ART[qy / unit].charAt(qx / unit) == '#') return QUEEN;
-        }
         int[] ch = chambers[c - 1];
         int hsh = (y * cols + x) * 0x9E3779B1;
         boolean floor = y >= ch[1] + ch[3] / 4;
         if (c == eggChamber && floor && ((hsh >>> 27) & 7) < Math.round(8 * eggFill) && ((x + y) & 1) == 0) return EGG;
-        if (c == foodChamber && floor && ((hsh >>> 27) & 7) < Math.round(8 * seedFill)) return SEED;
+        if (c == foodChamber) {
+            if (floor && ((hsh >>> 27) & 7) < Math.round(8 * seedFill)) return SEED;
+            float f = pantryStep / 32f;
+            boolean side = pantrySide(c) ? x <= ch[0] - ch[2] / 5 : x >= ch[0] + ch[2] / 5;
+            if (f > 0 && side && y >= ch[1] + ch[3] - Math.round(f * ch[3] * 1.1f) && ((hsh >>> 28) & 3) != 0) {
+                return ((hsh >>> 25) & 3) == 0 ? CRUMB : SEED;
+            }
+        }
         return 0;
     }
 
-    private boolean queenShown;
+    /** The pantry pile is on the side away from the tunnel the food comes in by. */
+    private boolean pantrySide(int c) { return chambers[c - 1][0] < entrance; }
+
     private float eggFill, seedFill;
+    private int pantryStep;               // today's pantry pile, 0..32
 
     private int bedrock(int x, int y, int h) {
         if (fossilAt(x, y)) return pal[BONE];
@@ -713,10 +734,9 @@ final class AntScene {
         if (stats == null) return false;
         stats.refresh(c);
         float g = stats.sandGrowth();
-        queenShown = g >= 0.25f;
-        eggFill = Math.min(1f, Math.max(0f, (g - 0.5f) * 2f));
+        eggFill = Math.min(1f, Math.max(0f, (g - 0.25f) * 1.5f));
         seedFill = Math.min(1f, Math.max(0f, (g - 0.75f) * 4f));
-        long key = stats.period * 1000 + (queenShown ? 100 : 0) + Math.round(eggFill * 8) * 10 + Math.round(seedFill * 8);
+        long key = stats.period * 1000 + Math.round(eggFill * 8) * 10 + Math.round(seedFill * 8);
         if (key == extrasKey) return false;
         extrasKey = key;
         return true;
@@ -975,6 +995,14 @@ final class AntScene {
         if (t - lastTick > 200) lastTick = t;
         if (hill.hasActive()) for (int k = 0; k < ticks; k++) hill.tick();
 
+        // The colony lives while the farm is animated and dry (it starts after the dig-in).
+        if (animate && floodP < 0 && digInStart < 0) simulate(c, t, gap);
+        else { colonyLive = false; fFall = -1; }
+        if (pantryDirty) {
+            pantryDirty = false;
+            if (!recompose && foodChamber > 0) recolorChamber(foodChamber);
+        }
+
         updateSky(c);
         updateNote(c, animate);
         updateDecor(c);
@@ -1044,11 +1072,6 @@ final class AntScene {
         return hill.freeDepth(Math.max(0, Math.min(cols - 1, x)));
     }
 
-    private static final int MAX_WORKERS = 14;
-    private final int[] wX = new int[MAX_WORKERS], wY = new int[MAX_WORKERS], wDir = new int[MAX_WORKERS];
-    private final int[] wFrame = new int[MAX_WORKERS];
-    private final boolean[] wCrumb = new boolean[MAX_WORKERS];
-
     private void render(Calendar c, long t, boolean animate) {
         long ms = msOfDay(c);
         int aw = WALK_A.w, ah = WALK_A.h;
@@ -1072,7 +1095,7 @@ final class AntScene {
             int head = oHead[shown - 1];
             dDir = oDir[shown - 1];
             int hx = head % cols, hy = head / cols;
-            Sprite sp = dDir < 2 ? WALK_A : CLIMB_A;
+            Sprite sp = dDir < 2 ? WALK_A : UPRIGHT;
             if (dDir == 0) { dx = hx - sp.w + 1; dy = hy - 1; }
             else if (dDir == 1) { dx = hx; dy = hy - 1; }
             else if (dDir == 2) { dx = hx - 1; dy = hy - sp.h + 1; }
@@ -1080,56 +1103,25 @@ final class AntScene {
             addCur(dx - 1, dy - 1, sp.w + 2, sp.h + 2);
         }
 
-        // Workers walk the finished tunnels, back and forth, about 2.5 cells a second.
-        int nw = 0;
-        if (animate && floodP < 0) {
-            int ready = 0;
-            for (int k = 0; k < paths.size(); k++) if (pathDone.get(k) <= shown) ready++;
-            int count = Math.min(MAX_WORKERS, ready * 2);
-            for (int k = 0; k < count; k++) {
-                // Two carry crumbs up the entrance tunnel (path 0) to the hill; the rest spread
-                // over the finished tunnels.
-                boolean carrier = k < 2;
-                int[] path = paths.get(carrier ? 0 : (k * 7 + 3) % ready);
-                if (path.length < 4) continue;
-                long period = path.length * 2L * 400;               // 0.4 s per cell
-                long ph = (t + k * 9_137L) % period;
-                float q = ph / (float) (period / 2);
-                boolean back = q > 1f;
-                float a = back ? 2f - q : q;
-                int idx = Math.min(path.length - 2, Math.round(a * (path.length - 2)));
-                int i0 = path[idx], i1 = path[idx + 1];
-                if (!dug[i0]) continue;
-                int ddx = i1 % cols - i0 % cols, ddy = i1 / cols - i0 / cols;
-                if (back) { ddx = -ddx; ddy = -ddy; }
-                int dir = Math.abs(ddx) >= Math.abs(ddy) ? (ddx >= 0 ? 0 : 1) : (ddy >= 0 ? 2 : 3);
-                Sprite sp = dir < 2 ? WALK_A : CLIMB_A;
-                // Walk along the tunnel floor (or one side of a shaft), not its middle.
-                int side = (k % 2 == 0 ? 1 : -1) * unit;
-                wX[nw] = i0 % cols - sp.w / 2 + (dir >= 2 ? side : 0);
-                wY[nw] = i0 / cols - sp.h / 2 + (dir < 2 ? side : 0);
-                wDir[nw] = dir;
-                wFrame[nw] = idx % 2;
-                wCrumb[nw] = carrier && back;      // heading back up toward the entrance
-                addCur(wX[nw] - 1, wY[nw] - 1, sp.w + 2, sp.h + 2);
-                nw++;
-            }
-        }
+        // The colony: food on the grass, the queen, and the workers at their jobs.
+        boolean colony = animate && floodP < 0 && colonyLive;
+        if (colony) placeColony(t);
 
         if (nDrops > 0) addCur(0, 0, cols, ground);
 
+        if (nPrev + nCur > dirty.length) fullDirty = true;      // too many pieces: send it all
         if (fullDirty) System.arraycopy(base, 0, px, 0, px.length);
         else {
             restorePrev();
             restore(cur, nCur);
         }
 
-        drawAnt(sx, sy, right ? 0 : 1, sFrame, true, false, pal[ANT]);
+        if (colony) drawColony();
+        drawAnt(sx, sy, right ? 0 : 1, sFrame, 0, false, pal[ANT]);
         if (dx > -9999) {
             int f = animate ? (int) ((t / 500) % 2) : 0;
-            drawAnt(dx, dy, dDir, f, lastDigAt >= 0 && t - lastDigAt < 1500, false, pal[WORKER]);
+            drawAnt(dx, dy, dDir, f, lastDigAt >= 0 && t - lastDigAt < 1500 ? pal[RIM] : 0, false, pal[WORKER]);
         }
-        for (int k = 0; k < nw; k++) drawAnt(wX[k], wY[k], wDir[k], wFrame[k], wCrumb[k], true, pal[WORKER]);
         for (int k = 0; k < nDrops; k++) {
             int x = Math.round(dX[k]), y = Math.round(dY[k]);
             for (int l = 0; l < 2 * unit; l++) {
@@ -1180,18 +1172,15 @@ final class AntScene {
      * A small ant, one cell per pixel of its art, facing dir (0 right, 1 left, 2 down, 3 up),
      * with a crumb in its jaws if asked. With airOnly it shows only over open tunnel.
      */
-    private void drawAnt(int x, int y, int dir, int frame, boolean crumb, boolean airOnly, int col) {
-        boolean side = dir < 2;
-        Sprite s = side ? (frame == 0 ? WALK_A : WALK_B) : (frame == 0 ? CLIMB_A : CLIMB_B);
-        boolean fx = dir == 1, fy = dir == 3;
-        for (int yy = 0; yy < s.h; yy++) for (int xx = 0; xx < s.w; xx++) {
-            if (!s.on(fx ? s.w - 1 - xx : xx, fy ? s.h - 1 - yy : yy)) continue;
-            plotAnt(x + xx, y + yy, col, airOnly);
-        }
-        if (crumb) {
-            int bx = dir == 0 ? x + s.w : dir == 1 ? x - 1 : x + s.w / 2;
-            int by = dir == 2 ? y + s.h : dir == 3 ? y - 1 : y + 1;
-            plotAnt(bx, by, pal[CRUMB], airOnly);
+    private void drawAnt(int x, int y, int dir, int frame, int crumb, boolean airOnly, int col) {
+        Sprite s = frame == 0 ? WALK_A : WALK_B;
+        drawSprite(s, x, y, dir, col, airOnly);
+        if (crumb != 0) {
+            int w = dir < 2 ? s.w : s.h, h = dir < 2 ? s.h : s.w;
+            int bx = dir == 0 ? x + w : dir == 1 ? x - 1 : x + w / 2;
+            int by = dir == 2 ? y + h : dir == 3 ? y - 1 : y;
+            plotAnt(bx, by, crumb, airOnly);
+            plotAnt(bx, by + (dir < 2 ? 1 : 0), crumb, airOnly);   // a crumb a little bigger than a cell
         }
     }
 
@@ -1203,7 +1192,790 @@ final class AntScene {
     }
 
     /** True while something needs smooth frames (dig-in, the flood, sliding grains). */
-    boolean busy() { return digInStart >= 0 || flooding() || nDrops > 0 || hill.hasActive(); }
+    boolean busy() { return digInStart >= 0 || flooding() || nDrops > 0 || hill.hasActive() || fFall >= 0; }
+
+    // ---- the colony: workers with jobs, the queen, food on the grass ----
+    //
+    // Each worker walks a route of cells through the finished tunnels at its own pace, pausing
+    // now and then and stopping briefly when it meets another head-on. Jobs:
+    //  - soil: from the face being dug up to the mound with a crumb of soil, and back;
+    //  - forage: when food lands on the grass, ants are recruited a few at a time; they walk
+    //    out over the mound to it, bite off a piece and carry it down to the pantry, until the
+    //    food is gone (the pantry's pile grows through the day);
+    //  - nurse: two stay by the queen; she lives in the deepest finished chamber, with her eggs,
+    //    and moves house (escorted) when a deeper one is finished;
+    //  - wander / mill: the rest go from chamber to chamber, or potter about and rest in one.
+    // Routes are cell indexes; a cell in row 0 stands for the surface at that column (the mound
+    // changes), so "outside" routes run over the grass and down through the mound.
+
+    private static final int J_WANDER = 0, J_MILL = 1, J_TO_PANTRY = 2, J_FORAGE = 3, J_SOIL = 4,
+            J_NURSE = 5, J_ESCORT = 6;
+    private static final int MAX_ANTS = 18, MAX_FORAGERS = 10;
+    private static final int BITE_S = 25;  // about how often a bite of food is carried in (s)
+    private int nAnts;
+    private final int[] aJob = new int[MAX_ANTS], aDir = new int[MAX_ANTS], aFrom = new int[MAX_ANTS],
+            aTo = new int[MAX_ANTS], aCarry = new int[MAX_ANTS], aLane = new int[MAX_ANTS],
+            aFace = new int[MAX_ANTS], aRounds = new int[MAX_ANTS];
+    private final int[][] aRoute = new int[MAX_ANTS][];
+    private final float[] aPos = new float[MAX_ANTS], aSpeed = new float[MAX_ANTS];
+    private final long[] aPause = new long[MAX_ANTS], aCool = new long[MAX_ANTS];
+    private long simT = -1, lastSpawn;
+    private final int[] mX = new int[MAX_ANTS], mY = new int[MAX_ANTS], mF = new int[MAX_ANTS];
+    private int simSec;                    // seconds of the day at the last step
+    private boolean colonyLive, pantryDirty;
+
+    // The queen: in a chamber (at rest, shuffling about) or walking her route to a deeper one.
+    private int qNode = -1, qTo = -1, qFace;
+    private int[] qRoute;
+    private float qPos, qX, qGoal;
+    private long qWait;
+
+    // Food: a few times a day something lands on the grass.
+    private static final int MAX_FOOD = 12;
+    private int nFood, totalBites, stored;
+    private final int[] evStart = new int[MAX_FOOD], evType = new int[MAX_FOOD], evX = new int[MAX_FOOD],
+            evBites = new int[MAX_FOOD];
+    private int fIdx = -1, fBites, fW, fH, fColorKey = Integer.MIN_VALUE, fCrumb;
+    private long fFall = -1;
+    private int[] fCells = new int[0], fCol = new int[0];   // food cells (dy * 64 + dx), eaten first first
+
+    // Where things are drawn this frame.
+    private final int[] pX = new int[MAX_ANTS], pY = new int[MAX_ANTS], pFr = new int[MAX_ANTS];
+    private final boolean[] pOn = new boolean[MAX_ANTS];
+    private int qpX, qpY, qpFr, foodY = -1;
+
+    /**
+     * The day's food: from about 07:30 to 20:30, every 70-130 minutes, on the grass either side
+     * of the nest, past the mound where there is room (so the trail shows against the sky).
+     */
+    private void planFood(Random r) {
+        int decoX = entrance < cols / 2 ? Math.round(cols * 0.8f) : Math.round(cols * 0.2f);
+        float clear = swayAmp + cols * 0.09f;          // past the mound's foot
+        int m = 7 * 60 + 15 + r.nextInt(40);
+        while (m < 20 * 60 + 30 && nFood < MAX_FOOD) {
+            int type = r.nextInt(FOOD_ART.length);
+            int w = FOOD_ART[type][0].length();
+            int side = r.nextBoolean() ? 1 : -1;
+            float d = clear + cols * 0.10f * r.nextFloat();
+            int x = 0;
+            for (int tries = 0; tries < 2; tries++) {
+                x = Math.round(entrance + side * d) - (side < 0 ? w : 0);
+                boolean off = x < 6 || x + w > cols - 6;
+                boolean onDecor = Math.abs(x + w / 2 - decoX) < 14 * unit;
+                if (!off && !onDecor) break;
+                side = -side;
+            }
+            x = Math.max(6, Math.min(cols - w - 6, x));
+            evStart[nFood] = m * 60;
+            evType[nFood] = type;
+            evX[nFood] = x;
+            evBites[nFood] = 28 + r.nextInt(16);
+            totalBites += evBites[nFood];
+            nFood++;
+            m += 70 + r.nextInt(60);
+        }
+    }
+
+    /** Sets up the current food (k), its cells in the order they are eaten, and its colours. */
+    private void setFood(int k) {
+        fIdx = k;
+        String[] art = FOOD_ART[evType[k]];
+        fW = art[0].length();
+        fH = art.length;
+        boolean nestLeft = evX[k] > entrance;
+        Random r = new Random(day * 13L + k);
+        List<long[]> cells = new ArrayList<>();
+        for (int y = 0; y < fH; y++) for (int x = 0; x < fW; x++) {
+            char ch = art[y].charAt(x);
+            if (ch == '.') continue;
+            int edge = nestLeft ? x : fW - 1 - x;      // bitten from the side facing the nest
+            cells.add(new long[]{edge * 3L + y + r.nextInt(5), y * 64 + x, ch});
+        }
+        java.util.Collections.sort(cells, new java.util.Comparator<long[]>() {
+            public int compare(long[] a, long[] b) { return Long.compare(a[0], b[0]); }
+        });
+        fCells = new int[cells.size()];
+        fCol = new int[cells.size()];
+        for (int j = 0; j < fCells.length; j++) { fCells[j] = (int) cells.get(j)[1]; fCol[j] = (int) cells.get(j)[2]; }
+        fColorKey = Integer.MIN_VALUE;
+        foodColors();
+    }
+
+    private final int[] fPal = new int[128];
+
+    private void foodColors() {
+        if (fColorKey == colorKey || fIdx < 0) return;
+        fColorKey = colorKey;
+        String keys = "rkwgcdybBsS";
+        int[] rgb = {0xD8343A, 0x1A1A1A, 0xE8F0C8, 0x3C8A3A, 0xC8904A, 0x4A2A14, 0xF0D040, 0x9A5A24, 0xE8C890, 0xF6F6F0, 0xD0D0D8};
+        for (int j = 0; j < keys.length(); j++) fPal[keys.charAt(j)] = prefs.color(rgb[j], 1f);
+        fCrumb = fPal[FOOD_MAIN.charAt(evType[fIdx])];
+    }
+
+    /** Food cells still there (the first `eaten` are gone). */
+    private int foodEaten() {
+        if (fIdx < 0) return 0;
+        if (fBites <= 0) return fCells.length;
+        return fCells.length - Math.round(fCells.length * fBites / (float) evBites[fIdx]);
+    }
+
+    /** Which food is down now; with resync, how much of it (and of the day's) is eaten by now. */
+    private void updateFood(long t, boolean resync) {
+        int k = -1;
+        for (int j = 0; j < nFood; j++) if (evStart[j] <= simSec) k = j;
+        if (k < 0) { fIdx = -1; if (resync) stored = 0; return; }
+        if (k != fIdx || resync) {
+            int age = simSec - evStart[k];
+            if (k != fIdx) setFood(k);
+            if (age < 20 && !resync) {
+                fBites = evBites[k];
+                fFall = t;                                     // it drops onto the grass
+            } else if (resync) {
+                float eaten = Math.max(0f, Math.min(1f, (age - 60) / (float) (evBites[k] * BITE_S)));
+                fBites = Math.round(evBites[k] * (1 - eaten));
+                fFall = age < 3 ? t : -1;
+                stored = evBites[k] - fBites;
+                for (int j = 0; j < k; j++) stored += evBites[j];
+            } else {
+                fBites = evBites[k];
+                fFall = -1;
+            }
+        }
+    }
+
+    private int foragersWanted() {
+        if (fIdx < 0 || fBites <= 0 || fFall >= 0 || foodChamber == 0 || !nodeReady(foodChamber)) return 0;
+        return Math.min(MAX_FORAGERS, 1 + (simSec - evStart[fIdx]) / 15);   // more join as word spreads
+    }
+
+    /** The column a forager stands at to bite the food. */
+    private int foodSpot() {
+        return evX[fIdx] > entrance ? evX[fIdx] - 2 : evX[fIdx] + fW + 1;
+    }
+
+    // ---- the nest as a graph ----
+
+    private boolean pathReady(int e) { return pathDone.get(e) <= shown; }
+
+    private boolean nodeReady(int n) {
+        if (n == 0) return true;
+        if (n <= nChambers) return chamberDone[n - 1] <= shown;
+        return n < nNodes && nodeEdge[n] >= 0 && pathReady(nodeEdge[n]);
+    }
+
+    /** Cells from node `from` to node `to` through finished tunnels (null if there is no way). */
+    private int[] route(int from, int to) {
+        if (from == to || from < 0 || to < 0) return null;
+        int[] prevE = new int[nNodes];
+        Arrays.fill(prevE, -2);
+        prevE[from] = -1;
+        int[] queue = new int[nNodes];
+        int qh = 0, qt = 0;
+        queue[qt++] = from;
+        while (qh < qt && prevE[to] == -2) {
+            int u = queue[qh++];
+            for (int e = 0; e < paths.size(); e++) {
+                if (!pathReady(e)) continue;
+                int[] pe = pathEnds.get(e);
+                int v = pe[0] == u ? pe[1] : pe[1] == u ? pe[0] : -1;
+                if (v < 0 || prevE[v] != -2 || (v != to && !nodeReady(v))) continue;
+                prevE[v] = e;
+                queue[qt++] = v;
+            }
+        }
+        if (prevE[to] == -2) return null;
+        int[] edges = new int[nNodes];
+        int n = 0, len = 0;
+        for (int v = to; v != from; ) {
+            int e = prevE[v];
+            edges[n++] = e;
+            len += paths.get(e).length;
+            int[] pe = pathEnds.get(e);
+            v = pe[0] == v ? pe[1] : pe[0];
+        }
+        int[] out = new int[len];
+        int o = 0, u = from;
+        for (int k = n - 1; k >= 0; k--) {
+            int e = edges[k];
+            int[] p = paths.get(e), pe = pathEnds.get(e);
+            boolean fwd = pe[0] == u;
+            for (int j = 0; j < p.length; j++) out[o++] = p[fwd ? j : p.length - 1 - j];
+            u = fwd ? pe[1] : pe[0];
+        }
+        return out;
+    }
+
+    /** From the entrance to the face being dug now (null when nothing is being dug). */
+    private int[] faceRoute() {
+        if (shown <= 0 || shown >= nOrder) return null;
+        for (int k = 0; k < nChambers; k++) {
+            if (chamberDone[k] <= shown) continue;
+            for (int e = 0; e < paths.size(); e++) {
+                if (pathEnds.get(e)[1] == k + 1 && pathReady(e)) return route(0, k + 1);
+            }
+        }
+        for (int e = 0; e < paths.size(); e++) {
+            if (pathReady(e)) continue;
+            int a = pathEnds.get(e)[0];
+            int[] base = a == 0 ? new int[0] : route(0, a);
+            if (base == null) return null;
+            int[] p = paths.get(e);
+            int n = 0;
+            while (n < p.length && dug[p[n]]) n++;
+            if (base.length + n < 2) return null;
+            int[] out = Arrays.copyOf(base, base.length + n);
+            System.arraycopy(p, 0, out, base.length, n);
+            return out;
+        }
+        return null;
+    }
+
+    /** Over the grass from column x to the entrance, down through the mound, then `in`. */
+    private int[] outside(int x, int[] in) {
+        int top = Math.max(1, Math.min(ground - 1, surfaceAt(entrance) - 1));   // row 0 means "surface"
+        int nH = Math.abs(x - entrance), nV = ground - top;
+        int[] out = new int[nH + nV + in.length];
+        int o = 0, s = x > entrance ? -1 : 1;
+        for (int k = 0; k < nH; k++) out[o++] = x + s * k;                 // row 0: the surface
+        for (int y = top; y < ground; y++) out[o++] = y * cols + entrance;   // inside the mound
+        System.arraycopy(in, 0, out, o, in.length);
+        return out;
+    }
+
+    private int[] forageRoute() {
+        if (fIdx < 0 || foodChamber == 0) return null;
+        int[] in = route(0, foodChamber);
+        return in == null ? null : outside(foodSpot(), in);
+    }
+
+    private int[] soilRoute() {
+        int[] in = faceRoute();
+        if (in == null) return null;
+        int dump = entrance + (rnd.nextBoolean() ? 1 : -1) * (2 + rnd.nextInt(5)) * unit;
+        return outside(Math.max(2, Math.min(cols - 3, dump)), in);
+    }
+
+    private int[] line(int x0, int x1, int y) {
+        int n = Math.abs(x1 - x0) + 1, s = x1 >= x0 ? 1 : -1;
+        int[] out = new int[n];
+        for (int k = 0; k < n; k++) out[k] = y * cols + x0 + s * k;
+        return out;
+    }
+
+    /** A random finished node other than `not` (chambers more likely), or -1. */
+    private int randomNode(int not) {
+        int total = 0;
+        for (int n = 0; n < nNodes; n++) if (n != not && nodeReady(n)) total += n >= 1 && n <= nChambers ? 3 : 1;
+        if (total == 0) return -1;
+        int pick = rnd.nextInt(total);
+        for (int n = 0; n < nNodes; n++) {
+            if (n == not || !nodeReady(n)) continue;
+            pick -= n >= 1 && n <= nChambers ? 3 : 1;
+            if (pick < 0) return n;
+        }
+        return -1;
+    }
+
+    private int readyChambers() {
+        int n = 0;
+        for (int k = 0; k < nChambers; k++) if (chamberDone[k] <= shown) n++;
+        return n;
+    }
+
+    // ---- positions ----
+
+    private int cellX(int c) { return c % cols; }
+
+    private int cellY(int c) {
+        int y = c / cols;
+        return y == 0 ? surfaceAt(c % cols) - 1 : y;
+    }
+
+    private int curCell(int k) {
+        int[] r = aRoute[k];
+        return r[Math.max(0, Math.min(r.length - 1, (int) aPos[k]))];
+    }
+
+    /** Which way a walker on route r at index idx, going dir, faces (0 right, 1 left, 2 down, 3 up). */
+    private int heading(int[] r, int idx, int dir, int keep) {
+        int j = Math.max(0, Math.min(r.length - 1, idx + 4 * dir));
+        int sign = 1;
+        if (j == idx) { j = Math.max(0, Math.min(r.length - 1, idx - 4 * dir)); sign = -1; }
+        int hx = (cellX(r[j]) - cellX(r[idx])) * sign, hy = (cellY(r[j]) - cellY(r[idx])) * sign;
+        if (hx == 0 && hy == 0) return keep;
+        return Math.abs(hx) >= Math.abs(hy) ? (hx >= 0 ? 0 : 1) : (hy >= 0 ? 2 : 3);
+    }
+
+    /** The tunnel floor under (x, y): the lowest open cell below it. */
+    private int floorBelow(int x, int y) {
+        int yy = y;
+        for (int k = 0; k < 24 && yy + 1 < rows && dug[(yy + 1) * cols + x]; k++) yy++;
+        return yy;
+    }
+
+    /** The floor under a body from column x0, w wide: the highest of the floors below it. */
+    private int floorUnder(int x0, int w, int y) {
+        int f = Integer.MAX_VALUE;
+        for (int x = Math.max(0, x0); x < Math.min(cols, x0 + w); x++) {
+            if (dug[y * cols + x]) f = Math.min(f, floorBelow(x, y));
+        }
+        return f == Integer.MAX_VALUE ? y : f;
+    }
+
+    /** The tunnel wall beside (x, y) in direction s (the last open cell). */
+    private int wallBeside(int x, int y, int s) {
+        int xx = x;
+        for (int k = 0; k < 14 && xx + s > 0 && xx + s < cols - 1 && dug[y * cols + xx + s]; k++) xx += s;
+        return xx;
+    }
+
+    // ---- the ants' day ----
+
+    private int spawn(int job, int[] route, float pos, int dir, int from, int to) {
+        if (nAnts >= MAX_ANTS || route == null || route.length < 2) return -1;
+        int k = nAnts++;
+        aJob[k] = job;
+        setRoute(k, route, pos, dir, from, to);
+        aCarry[k] = 0;
+        aLane[k] = rnd.nextBoolean() ? 1 : -1;
+        aSpeed[k] = (1.9f + rnd.nextFloat() * 1.4f) * Math.max(1, unit) / 2f;
+        aPause[k] = 0;
+        aCool[k] = 0;
+        aRounds[k] = 0;
+        aFace[k] = 0;
+        return k;
+    }
+
+    private void setRoute(int k, int[] route, float pos, int dir, int from, int to) {
+        aRoute[k] = route;
+        aPos[k] = Math.max(0, Math.min(route.length - 1, pos));
+        aDir[k] = dir;
+        aFrom[k] = from;
+        aTo[k] = to;
+    }
+
+    /** Potter about in chamber `node`: walk its floor to a spot near aroundX. */
+    private boolean mill(int k, int node, int aroundX, int spread) {
+        if (node < 1 || node > nChambers) return false;
+        int[] ch = chambers[node - 1];
+        int lim = ch[2] * 3 / 4;
+        int x0 = Math.max(ch[0] - lim, Math.min(ch[0] + lim, cellX(curCell(k))));
+        int x1 = aroundX + rnd.nextInt(2 * spread + 1) - spread;
+        x1 = Math.max(ch[0] - lim, Math.min(ch[0] + lim, x1));
+        if (Math.abs(x1 - x0) < 2) x1 = x0 + (x0 < ch[0] ? 3 : -3);
+        setRoute(k, line(x0, x1, ch[1]), 0, 1, node, node);
+        return true;
+    }
+
+    private int count(int job) {
+        int n = 0;
+        for (int k = 0; k < nAnts; k++) if (aJob[k] == job) n++;
+        return n;
+    }
+
+    /** An ant at node `node` with nothing to do picks its next thing. */
+    private void nextWander(int k, int node) {
+        aJob[k] = J_WANDER;
+        int want = foragersWanted();
+        if (want > 0 && count(J_FORAGE) + count(J_TO_PANTRY) < want) {
+            if (node == foodChamber) {
+                int[] l = forageRoute();
+                if (l != null) { aJob[k] = J_FORAGE; setRoute(k, l, l.length - 1, -1, -1, foodChamber); return; }
+            } else {
+                int[] r = route(node, foodChamber);
+                if (r != null) { aJob[k] = J_TO_PANTRY; setRoute(k, r, 0, 1, node, foodChamber); return; }
+            }
+        }
+        if (node >= 1 && node <= nChambers && rnd.nextFloat() < 0.5f) {
+            aJob[k] = J_MILL;
+            aRounds[k] = 1 + rnd.nextInt(4);
+            mill(k, node, chambers[node - 1][0], chambers[node - 1][2]);
+            aPause[k] = rnd.nextInt(1500);
+            return;
+        }
+        int m = randomNode(node);
+        int[] r = m >= 0 ? route(node, m) : null;
+        if (r != null) { setRoute(k, r, 0, 1, node, m); return; }
+        if (!mill(k, node, node >= 1 && node <= nChambers ? chambers[node - 1][0] : 0, 6)) aPause[k] = 3000;
+        else aJob[k] = J_MILL;
+    }
+
+    /** From the surface (where it stands) down into the nest, somewhere. */
+    private void goDown(int k) {
+        aJob[k] = J_WANDER;
+        int m = randomNode(0);
+        int[] in = m > 0 ? route(0, m) : null;
+        if (in == null) { in = new int[]{ground * cols + entrance, (ground + 1) * cols + entrance}; m = 0; }
+        setRoute(k, outside(cellX(curCell(k)), in), 0, 1, -1, m);
+    }
+
+    private void arrive(int k, boolean atEnd) {
+        int node = atEnd ? aTo[k] : aFrom[k];
+        switch (aJob[k]) {
+            case J_FORAGE:
+                if (!atEnd) {                       // at the food: bite off a piece
+                    aPause[k] = 900 + rnd.nextInt(1100);
+                    if (fIdx >= 0 && fBites > 0) { fBites--; aCarry[k] = fCrumb; }
+                    aDir[k] = 1;
+                    return;
+                }
+                if (aCarry[k] != 0) { aCarry[k] = 0; stored++; aPause[k] = 500 + rnd.nextInt(900); }
+                if (foragersWanted() > 0 && count(J_FORAGE) <= foragersWanted()) {
+                    int[] l = forageRoute();
+                    if (l != null) { setRoute(k, l, l.length - 1, -1, -1, foodChamber); return; }
+                }
+                nextWander(k, foodChamber);
+                return;
+            case J_TO_PANTRY:
+                int[] l = forageRoute();
+                if (l != null && foragersWanted() > 0) { aJob[k] = J_FORAGE; setRoute(k, l, l.length - 1, -1, -1, foodChamber); }
+                else nextWander(k, node);
+                return;
+            case J_SOIL:
+                if (!atEnd) {                       // on the mound: drop the soil
+                    aCarry[k] = 0;
+                    aPause[k] = 400 + rnd.nextInt(700);
+                    int[] s = soilRoute();
+                    if (s != null) setRoute(k, s, 0, 1, -1, -1);
+                    else goDown(k);
+                } else {                            // at the face: dig a crumb loose
+                    aPause[k] = 1500 + rnd.nextInt(2500);
+                    aCarry[k] = pal[RIM];
+                    int[] s = soilRoute();
+                    if (s != null) setRoute(k, s, s.length - 1, -1, -1, -1);
+                    else aDir[k] = -1;
+                }
+                return;
+            case J_NURSE:
+                if (qNode < 0) { nextWander(k, node); return; }
+                aPause[k] = 700 + rnd.nextInt(3500);
+                if (rnd.nextFloat() < 0.3f) aCarry[k] = aCarry[k] == 0 ? pal[EGG] : 0;   // tending the eggs
+                mill(k, qNode, besideQueen(), unit);
+                return;
+            case J_ESCORT:
+                return;
+            case J_MILL:
+                if (--aRounds[k] > 0 && mill(k, node, chambers[node - 1][0], chambers[node - 1][2])) {
+                    aPause[k] = 500 + rnd.nextInt(rnd.nextFloat() < 0.3f ? 15000 : 3000);   // a rest
+                    return;
+                }
+                nextWander(k, node);
+                return;
+            default:
+                if (node < 0) goDown(k);
+                else nextWander(k, node);
+        }
+    }
+
+    /** A spot just beside the queen (in front of her or behind, past her eggs), for a nurse. */
+    private int besideQueen() {
+        int side = rnd.nextBoolean() ? 1 : -1;
+        return Math.round(qX) + side * (QUEEN_A.w / 2 + 4 + rnd.nextInt(4) + (side == (qFace == 0 ? -1 : 1) ? 10 : 0));
+    }
+
+    private void settleQueen(int n) {
+        qNode = n;
+        qRoute = null;
+        qX = qGoal = chambers[n - 1][0];
+        qWait = 3000;
+        for (int k = 0; k < nAnts; k++) {
+            if (aJob[k] != J_ESCORT) continue;
+            aJob[k] = J_NURSE;
+            if (!mill(k, n, besideQueen(), unit)) nextWander(k, 0);
+        }
+    }
+
+    private void updateQueen(long dtMs) {
+        int want = -1;
+        for (int k = 0; k < nChambers; k++) {
+            if (chamberDone[k] <= shown && (want < 0 || chambers[k][1] > chambers[want - 1][1])) want = k + 1;
+        }
+        if (want < 0) { qNode = -1; qRoute = null; return; }
+        if (qNode < 0) settleQueen(want);
+        float dt = dtMs / 1000f;
+        if (qRoute == null && want != qNode) {
+            int[] r = route(qNode, want);
+            if (r == null) settleQueen(want);
+            else {
+                // Moving day: she walks to the new chamber, her nurses close behind.
+                qRoute = r;
+                qPos = 0;
+                qTo = want;
+                int j = 0;
+                for (int k = 0; k < nAnts; k++) {
+                    if (aJob[k] != J_NURSE) continue;
+                    aJob[k] = J_ESCORT;
+                    aRoute[k] = r;
+                    aRounds[k] = ++j;
+                    aDir[k] = 1;
+                    aCarry[k] = 0;
+                }
+            }
+        }
+        if (qRoute != null) {
+            qPos += 1.3f * Math.max(1, unit) / 2f * dt;
+            if (qPos >= qRoute.length - 1) { settleQueen(qTo); return; }
+            for (int k = 0; k < nAnts; k++) {
+                if (aJob[k] == J_ESCORT) aPos[k] = Math.max(0, qPos - 8 * Math.max(1, unit) * aRounds[k]);
+            }
+            return;
+        }
+        // At rest: she shuffles about the chamber now and then.
+        if (qWait > 0) qWait -= dtMs;
+        else if (Math.abs(qGoal - qX) < 0.5f) {
+            int[] ch = chambers[qNode - 1];
+            qGoal = ch[0] + (rnd.nextFloat() - 0.5f) * ch[2] * 0.7f;
+            qWait = 5000 + rnd.nextInt(15000);
+        } else {
+            float step = 0.6f * dt * Math.max(1, unit) / 2f;
+            qFace = qGoal > qX ? 0 : 1;
+            qX = Math.abs(qGoal - qX) <= step ? qGoal : qX + Math.signum(qGoal - qX) * step;
+        }
+    }
+
+    /** The colony from scratch (start, or back from a gap): everyone somewhere along their way. */
+    private void seedColony(long t) {
+        nAnts = 0;
+        qNode = -1;
+        qRoute = null;
+        updateFood(t, true);
+        updateQueen(0);
+        for (int k = 0; k < 2; k++) {
+            int[] s = soilRoute();
+            if (s == null) break;
+            int dir = rnd.nextBoolean() ? 1 : -1;
+            int a = spawn(J_SOIL, s, rnd.nextInt(s.length), dir, -1, -1);
+            if (a >= 0 && dir < 0) aCarry[a] = pal[RIM];
+        }
+        if (qNode > 0) for (int k = 0; k < 2; k++) {
+            int a = spawn(J_NURSE, line(0, 1, 0), 0, 1, qNode, qNode);
+            if (a >= 0) { setRoute(a, line(Math.round(qX), Math.round(qX) + 1, chambers[qNode - 1][1]), 0, 1, qNode, qNode); mill(a, qNode, besideQueen(), unit); }
+        }
+        int want = foragersWanted();
+        for (int k = 0; k < want; k++) {
+            int[] l = forageRoute();
+            if (l == null) break;
+            int dir = rnd.nextBoolean() ? 1 : -1;
+            int a = spawn(J_FORAGE, l, rnd.nextInt(l.length), dir, -1, foodChamber);
+            if (a >= 0 && dir > 0) aCarry[a] = fCrumb;
+        }
+        int wander = Math.min(6, readyChambers() + 2);
+        for (int k = 0; k < wander && readyChambers() > 0; k++) {
+            int n = randomNode(-1), m = randomNode(n);
+            int[] r = route(n, m);
+            if (r != null) spawn(J_WANDER, r, rnd.nextInt(r.length), 1, n, m);
+        }
+        lastSpawn = t;
+    }
+
+    private void simulate(Calendar c, long t, boolean gap) {
+        simSec = (int) (msOfDay(c) / 1000);
+        long dtMs = simT < 0 ? 0 : t - simT;
+        simT = t;
+        if (!colonyLive || gap || dtMs > 5000) {
+            seedColony(t);
+            colonyLive = true;
+            dtMs = 0;
+        }
+        dtMs = Math.min(dtMs, 1000);
+        float dt = dtMs / 1000f;
+        updateFood(t, false);
+        if (fFall >= 0 && t - fFall > 1400) fFall = -1;
+        foodColors();
+        updateQueen(dtMs);
+
+        // Keep the colony staffed: soil carriers while digging, two nurses, foragers while
+        // there is food, a few wanderers. New ants come up out of a chamber (or the face).
+        if (t - lastSpawn > 1500 && nAnts < MAX_ANTS) {
+            int a = -1;
+            if (count(J_SOIL) < 2 && shown > 0 && shown < nOrder) {
+                int[] s = soilRoute();
+                a = spawn(J_SOIL, s, s == null ? 0 : s.length - 1, -1, -1, -1);
+                if (a >= 0) { aCarry[a] = pal[RIM]; aPause[a] = 1000; }
+            } else if (qNode > 0 && qRoute == null && count(J_NURSE) < 2) {
+                int y = chambers[qNode - 1][1], x = Math.round(qX);
+                a = spawn(J_NURSE, line(x, x + 1, y), 0, 1, qNode, qNode);
+                if (a >= 0) mill(a, qNode, besideQueen(), unit);
+            } else if (count(J_FORAGE) + count(J_TO_PANTRY) < foragersWanted() && t - lastSpawn > 5000) {
+                int[] l = forageRoute();
+                a = l == null ? -1 : spawn(J_FORAGE, l, l.length - 1, -1, -1, foodChamber);
+            } else if (count(J_WANDER) + count(J_MILL) < Math.min(6, readyChambers() + 2) && readyChambers() > 0) {
+                int n = randomNode(0);
+                if (n >= 1 && n <= nChambers) {
+                    a = spawn(J_MILL, line(chambers[n - 1][0], chambers[n - 1][0] + 1, chambers[n - 1][1]), 0, 1, n, n);
+                    if (a >= 0) { aRounds[a] = 1 + rnd.nextInt(3); mill(a, n, chambers[n - 1][0], chambers[n - 1][2]); }
+                }
+            }
+            if (a >= 0) lastSpawn = t;
+        }
+
+        for (int k = 0; k < nAnts; k++) {
+            if (aJob[k] == J_ESCORT) continue;
+            if (aPause[k] > 0) { aPause[k] -= dtMs; continue; }
+            boolean errand = aJob[k] == J_WANDER || aJob[k] == J_FORAGE || aJob[k] == J_SOIL || aJob[k] == J_TO_PANTRY;
+            if (errand && rnd.nextFloat() < 0.07f * dt) { aPause[k] = 300 + rnd.nextInt(1400); continue; }
+            // Now and then a wanderer changes its mind and turns back.
+            if (aJob[k] == J_WANDER && aFrom[k] >= 0 && rnd.nextFloat() < 0.015f * dt) {
+                aDir[k] = -aDir[k];
+            }
+            float sp = aSpeed[k] * (aJob[k] == J_MILL || aJob[k] == J_NURSE ? 0.6f : 1f);
+            if (aCarry[k] != 0 && aJob[k] == J_FORAGE) sp *= 0.85f;   // loaded
+            aPos[k] += aDir[k] * sp * dt;
+            int last = aRoute[k].length - 1;
+            if (aDir[k] > 0 && aPos[k] >= last) { aPos[k] = last; arrive(k, true); }
+            else if (aDir[k] < 0 && aPos[k] <= 0) { aPos[k] = 0; arrive(k, false); }
+        }
+
+        // Two meeting head-on stop for a moment (antennae). Where each is and which way it
+        // faces, worked out once.
+        for (int i = 0; i < nAnts; i++) {
+            int ci = curCell(i);
+            mX[i] = cellX(ci);
+            mY[i] = ci / cols == 0 ? -100 : ci / cols;          // not on the surface
+            mF[i] = aPause[i] > 0 || t < aCool[i] || aJob[i] == J_ESCORT || mY[i] < 0 ? -1
+                    : heading(aRoute[i], (int) aPos[i], aDir[i], aFace[i]);
+        }
+        for (int i = 0; i < nAnts; i++) {
+            if (mF[i] < 0) continue;
+            for (int j = i + 1; j < nAnts; j++) {
+                if (mF[j] != (mF[i] ^ 1)) continue;
+                if (Math.abs(mX[j] - mX[i]) > 4 || Math.abs(mY[j] - mY[i]) > 4) continue;
+                aPause[i] = 500 + rnd.nextInt(800);
+                aPause[j] = 500 + rnd.nextInt(800);
+                aCool[i] = aCool[j] = t + 8000;
+                mF[j] = -1;                                      // one meeting at a time
+                break;
+            }
+        }
+
+        int step = totalBites == 0 ? 0 : Math.min(32, stored * 32 / totalBites);
+        if (step != pantryStep) { pantryStep = step; pantryDirty = true; }
+    }
+
+    private void recolorChamber(int c) {
+        int[] ch = chambers[c - 1];
+        int x0 = Math.max(0, ch[0] - ch[2] - 3), x1 = Math.min(cols - 1, ch[0] + ch[2] + 3);
+        int y0 = Math.max(0, ch[1] - ch[3] - 3), y1 = Math.min(rows - 1, ch[1] + ch[3] + 3);
+        for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) recolor(y * cols + x);
+        addCur(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+    }
+
+    // ---- drawing the colony ----
+
+    /** Works out where the food, the queen and each ant are drawn, and marks those areas. */
+    private void placeColony(long t) {
+        // Food: its bottom on the ground (or the mound), dropping in when it has just landed.
+        foodY = -1;
+        if (fIdx >= 0 && foodEaten() < fCells.length) {
+            foodY = surfaceAt(evX[fIdx] + fW / 2) - fH;
+            if (fFall >= 0) {
+                float p = (t - fFall) / 1400f;
+                if (p >= 1f) fFall = -1;
+                else foodY -= Math.round((1 - p) * (1 - p) * foodY);
+            }
+            addCur(evX[fIdx] - 1, foodY - 1, fW + 2, fH + 2);
+        }
+        // The queen.
+        qpX = -9999;
+        if (qNode > 0) {
+            int x, y, face;
+            if (qRoute != null) {
+                int idx = Math.max(0, Math.min(qRoute.length - 1, (int) qPos));
+                x = cellX(qRoute[idx]);
+                y = cellY(qRoute[idx]);
+                qFace = heading(qRoute, idx, 1, qFace);
+                qpFr = idx & 1;
+            } else {
+                x = Math.round(qX);
+                y = chambers[qNode - 1][1];
+                qpFr = Math.abs(qGoal - qX) > 0.5f && qWait <= 0 ? (int) (qX) & 1 : 0;
+            }
+            face = qFace;
+            int len = QUEEN_A.w, thick = QUEEN_A.h;
+            if (face < 2) {
+                qpX = x - len / 2;
+                // Resting, she lies on the highest floor under her (chamber floors curve).
+                qpY = (qRoute == null ? floorUnder(qpX, len, y) : floorBelow(x, y)) - thick + 1;
+            } else {
+                qpX = wallBeside(x, y, 1) - thick + 1;
+                qpY = y - len / 2;
+            }
+            addCur(qpX - 8, qpY - 2, len + 16, len + 4);
+        }
+        // The workers.
+        for (int k = 0; k < nAnts; k++) {
+            pOn[k] = false;
+            int[] r = aRoute[k];
+            int idx = Math.max(0, Math.min(r.length - 1, (int) aPos[k]));
+            int c = r[idx], x = cellX(c), y = cellY(c);
+            if (aJob[k] == J_ESCORT && aPos[k] <= 0 && qPos < 4) continue;
+            if (aPause[k] <= 0) aFace[k] = heading(r, idx, aDir[k], aFace[k]);
+            int face = aFace[k];
+            if (face < 2) {
+                pX[k] = x - WALK_A.w / 2;
+                pY[k] = (y < ground ? surfaceAt(x) - 1 : floorBelow(x, y)) - WALK_A.h + 1;
+            } else if (y < ground) {
+                pX[k] = x - 1;
+                pY[k] = y - UPRIGHT.h / 2;
+            } else {
+                int wall = wallBeside(x, y, aLane[k]);
+                pX[k] = aLane[k] > 0 ? wall - UPRIGHT.w + 1 : wall;
+                pY[k] = y - UPRIGHT.h / 2;
+            }
+            pFr[k] = aPause[k] > 0 ? 0 : idx & 1;
+            pOn[k] = true;
+            addCur(pX[k] - 2, pY[k] - 2, 9, 9);
+        }
+    }
+
+    private void drawColony() {
+        if (foodY >= 0) {
+            for (int j = foodEaten(); j < fCells.length; j++) {
+                int x = evX[fIdx] + (fCells[j] & 63), y = foodY + (fCells[j] >> 6);
+                if (x >= 0 && x < cols && y >= 0 && y < ground) px[y * cols + x] = fPal[fCol[j]];
+            }
+        }
+        if (qpX > -9999) {
+            // Her eggs lie behind her while she rests.
+            if (qRoute == null) {
+                int n = 4 + Math.round(eggFill * 3);
+                int floorY = qpY + QUEEN_A.h - 1;
+                for (int e = 0; e < n; e++) {
+                    int ey = floorY - EGG_Y[e];
+                    int ex = qFace == 0 ? qpX - 3 - EGG_X[e] : qpX + QUEEN_A.w + 1 + EGG_X[e];
+                    plotAnt(ex, ey, pal[EGG], true);
+                    plotAnt(ex + 1, ey, pal[EGG], true);
+                }
+            }
+            drawQueen(qpX, qpY, qFace, qpFr);
+        }
+        for (int k = 0; k < nAnts; k++) {
+            if (pOn[k]) drawAnt(pX[k], pY[k], aFace[k], pFr[k], aCarry[k], true, pY[k] + 2 < ground ? pal[WORKER_SKY] : pal[WORKER]);
+        }
+    }
+
+    private static final int[] EGG_X = {0, 3, 6, 1, 9, 4, 7}, EGG_Y = {0, 0, 0, 1, 0, 1, 1};
+
+    /** The queen, twice a worker's length, facing dir (side view; down/up turned 90 degrees). */
+    private void drawQueen(int x, int y, int dir, int frame) {
+        drawSprite(frame == 0 ? QUEEN_A : QUEEN_B, x, y, dir, pal[QUEEN], true);
+    }
+
+    /**
+     * A side-view sprite (head on the right) facing dir: 0 right, 1 left, 2 down, 3 up (turned
+     * 90 degrees, so it is s.h wide and s.w tall).
+     */
+    private void drawSprite(Sprite s, int x, int y, int dir, int col, boolean airOnly) {
+        int w = dir < 2 ? s.w : s.h, h = dir < 2 ? s.h : s.w;
+        for (int yy = 0; yy < h; yy++) for (int xx = 0; xx < w; xx++) {
+            boolean on;
+            if (dir == 0) on = s.on(xx, yy);
+            else if (dir == 1) on = s.on(s.w - 1 - xx, yy);
+            else if (dir == 2) on = s.on(yy, xx);
+            else on = s.on(s.w - 1 - yy, xx);
+            if (on) plotAnt(x + xx, y + yy, col, airOnly);
+        }
+    }
 
     // ---- sprites (original pixel art) ----
 
@@ -1214,14 +1986,55 @@ final class AntScene {
         boolean on(int x, int y) { return r[y].charAt(x) == '#'; }
     }
 
-    private static final String[] QUEEN_ART = {
-            "...........#",
-            "..####.###.#",
-            ".###########",
-            "######.####.",
-            ".####.#.#.#.",
-            "..#..#.#...."};
-    /** Ants, one cell per pixel: walking (head on the right) and climbing (head down). */
+    /** The queen (head on the right): a big gaster, thorax, head and feelers; two leg frames. */
+    static final Sprite QUEEN_A = new Sprite(
+            ".............#.",
+            "..#####....##.#",
+            ".#######.#####.",
+            "#############..",
+            ".######..#.....",
+            ".......#.#.#...");
+    static final Sprite QUEEN_B = new Sprite(
+            ".............#.",
+            "..#####....##.#",
+            ".#######.#####.",
+            "#############..",
+            ".######..#.....",
+            "......#.#.#....");
+
+    /** Food that lands on the grass (colour letters; see foodColors) and its crumbs' colour. */
+    private static final String[][] FOOD_ART = {
+            {"....rrrrrr....",      // a slice of watermelon
+             "..rrrkrrrrkr..",
+             ".rrkrrrrkrrrr.",
+             "rrrrrrkrrrrrkr",
+             "wwwwwwwwwwwwww",
+             "gggggggggggggg"},
+            {"...cccccc...",        // a cookie
+             ".ccdccccdcc.",
+             "cccccccccccc",
+             "ccdcccdcccdc",
+             ".cccccccccc."},
+            {"...g.gg.g...",        // a strawberry
+             "..gggggggg..",
+             ".rrryrrrryr.",
+             "rryrrrryrrrr",
+             ".rrrrryrrrr.",
+             "..ryrrrrrr..",
+             "....rrrr...."},
+            {"..bbbbbbbbbb..",      // a crust of bread
+             ".bBBBBBBBBBBb.",
+             "bBBBBBBBBBBBBb",
+             "bBBBBBBBBBBBBb",
+             "bbbbbbbbbbbbbb"},
+            {"ssssssss",            // a sugar cube
+             "sSssssSs",
+             "ssssssss",
+             "ssSsssss",
+             "sssssSss",
+             "SSSSSSSS"}};
+    private static final String FOOD_MAIN = "rcrBs";
+    /** A worker, one cell per pixel, walking (head on the right); two leg frames. */
     static final Sprite WALK_A = new Sprite(
             "....#",
             "##.##",
@@ -1230,16 +2043,6 @@ final class AntScene {
             "....#",
             "##.##",
             "#.#.#");
-    static final Sprite CLIMB_A = new Sprite(
-            ".#.",
-            "#.#",
-            ".#.",
-            "#.#",
-            ".#.");
-    static final Sprite CLIMB_B = new Sprite(
-            "#.#",
-            ".#.",
-            "#.#",
-            ".#.",
-            ".#.");
+    /** The size of a worker turned to go up or down (see drawSprite). */
+    static final Sprite UPRIGHT = new Sprite("###", "###", "###", "###", "###");
 }
